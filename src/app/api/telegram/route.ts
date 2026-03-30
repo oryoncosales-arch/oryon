@@ -8,6 +8,14 @@ type TelegramUpdate = {
 type TelegramMessage = {
   message_id: number
   chat: { id: number }
+  from?: {
+    id?: number
+    is_bot?: boolean
+    first_name?: string
+    last_name?: string
+    username?: string
+    language_code?: string
+  }
   text?: string
   document?: {
     file_id: string
@@ -22,11 +30,24 @@ type TelegramMessage = {
 
 const TELEGRAM_API = 'https://api.telegram.org'
 const TELEGRAM_FILE_API = 'https://api.telegram.org/file'
+const PROJECT_BASE_URL = 'https://oryon-contabilizai.vercel.app'
 
 function requiredEnv(name: string): string {
   const v = process.env[name]
   if (!v) throw new Error(`Missing env var: ${name}`)
   return v
+}
+
+type BotUsuario = {
+  telegram_chat_id: number
+  nome?: string | null
+  empresa?: string | null
+}
+
+type Escritorio = {
+  codigo: string
+  nome?: string | null
+  empresa?: string | null
 }
 
 async function telegramApi(method: string, body: unknown) {
@@ -42,6 +63,13 @@ async function telegramApi(method: string, body: unknown) {
     throw new Error(`Telegram API error (${method}): ${res.status} ${t}`)
   }
   return await res.json().catch(() => ({}))
+}
+
+async function telegramSendMessage(chatId: number, text: string) {
+  await telegramApi('sendMessage', {
+    chat_id: chatId,
+    text,
+  })
 }
 
 async function telegramGetFile(fileId: string): Promise<{ file_path: string }> {
@@ -78,6 +106,79 @@ function sniffIsProbablyBinaryUtf8(text: string) {
   let zeros = 0
   for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 0) zeros++
   return zeros > 0
+}
+
+async function supabaseRequest(path: string, init?: RequestInit) {
+  const url = requiredEnv('SUPABASE_URL').replace(/\/$/, '')
+  const key = requiredEnv('SUPABASE_SERVICE_KEY')
+
+  const res = await fetch(`${url}${path}`, {
+    ...init,
+    headers: {
+      apikey: key,
+      Authorization: `Bearer ${key}`,
+      ...(init?.headers ?? {}),
+    },
+  })
+
+  if (!res.ok) {
+    const t = await res.text().catch(() => '')
+    throw new Error(`Supabase REST error (${path}): ${res.status} ${t}`)
+  }
+
+  const text = await res.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text)
+  } catch {
+    return text
+  }
+}
+
+async function getBotUsuario(chatId: number): Promise<BotUsuario | null> {
+  const rows = (await supabaseRequest(
+    `/rest/v1/bot_usuarios?telegram_chat_id=eq.${encodeURIComponent(String(chatId))}&select=telegram_chat_id,nome,empresa&limit=1`,
+    { method: 'GET' },
+  )) as BotUsuario[] | null
+
+  if (!rows || !rows.length) return null
+  return rows[0] ?? null
+}
+
+async function findEscritorioByCodigo(codigo: string): Promise<Escritorio | null> {
+  const rows = (await supabaseRequest(
+    `/rest/v1/escritorios?codigo=eq.${encodeURIComponent(codigo)}&select=codigo,nome,empresa&limit=1`,
+    { method: 'GET' },
+  )) as Escritorio[] | null
+
+  if (!rows || !rows.length) return null
+  return rows[0] ?? null
+}
+
+function buildNomeFromFrom(from?: TelegramMessage['from']) {
+  const first = from?.first_name?.trim() ?? ''
+  const last = from?.last_name?.trim() ?? ''
+  const full = `${first} ${last}`.trim()
+  if (full) return full
+  if (from?.username) return from.username
+  return 'Cliente'
+}
+
+async function createBotUsuario(params: { chatId: number; nome: string; empresa: string; codigo: string }) {
+  // Mantém inserção simples e explícita para corresponder ao que você pediu.
+  await supabaseRequest('/rest/v1/bot_usuarios', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      telegram_chat_id: params.chatId,
+      nome: params.nome,
+      empresa: params.empresa,
+      escritorio_codigo: params.codigo,
+    }),
+  })
 }
 
 async function anthropicExtractTextFromMedia(params: {
@@ -144,54 +245,27 @@ async function saveExtratoToSupabase(params: {
   fileName?: string
   mimeType?: string
   telegramChatId: number
-  telegramMessageId: number
+  empresa: string
 }) {
-  const url = requiredEnv('SUPABASE_URL')
-  const key = requiredEnv('SUPABASE_SERVICE_KEY')
-  const endpoint = `${url.replace(/\/$/, '')}/rest/v1/extratos`
-
-  const candidates: Record<string, unknown>[] = [
-    {
+  await supabaseRequest('/rest/v1/extratos', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Prefer: 'return=minimal',
+    },
+    body: JSON.stringify({
+      telegram_chat_id: params.telegramChatId,
+      empresa: params.empresa,
       conteudo: params.texto,
       arquivo_nome: params.fileName ?? null,
       mime_type: params.mimeType ?? null,
       origem: 'telegram',
-      telegram_chat_id: params.telegramChatId,
-      telegram_message_id: params.telegramMessageId,
-      metadata: {
-        telegram_chat_id: params.telegramChatId,
-        telegram_message_id: params.telegramMessageId,
-        arquivo_nome: params.fileName ?? null,
-        mime_type: params.mimeType ?? null,
-      },
-    },
-    { conteudo: params.texto },
-    { texto: params.texto },
-    { raw_text: params.texto },
-    { content: params.texto },
-  ]
-
-  let lastErr = ''
-  for (const payload of candidates) {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        'Content-Type': 'application/json',
-        Prefer: 'return=representation',
-      },
-      body: JSON.stringify(payload),
-    })
-    if (res.ok) return { ok: true }
-    lastErr = await res.text().catch(() => res.statusText)
-  }
-  throw new Error(`Falha ao salvar no Supabase (extratos). Último erro: ${lastErr}`)
+    }),
+  })
 }
 
-async function callInternalJson(req: NextRequest, path: string, body: unknown) {
-  const baseUrl = new URL(req.url).origin
-  const res = await fetch(`${baseUrl}${path}`, {
+async function callInternalJson(path: string, body: unknown) {
+  const res = await fetch(`${PROJECT_BASE_URL}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -250,86 +324,130 @@ export async function POST(req: NextRequest) {
     if (!msg?.chat?.id || !msg.message_id) return NextResponse.json({ ok: true })
 
     const chatId = msg.chat.id
+    const texto = msg.text?.trim()
 
+    // 1) /start
+    if (texto === '/start' || texto?.startsWith('/start ')) {
+      const usuario = await getBotUsuario(chatId)
+      if (usuario?.telegram_chat_id) {
+        const nome = usuario.nome ?? 'Cliente'
+        const empresa = usuario.empresa ?? 'sua empresa'
+        await telegramSendMessage(chatId, `Olá ${nome}! Pode enviar o extrato da ${empresa}.`)
+      } else {
+        await telegramSendMessage(chatId, 'Olá! Para começar, envie o código do escritório.')
+      }
+      return NextResponse.json({ ok: true })
+    }
+
+    // Documento ou foto (arquivo)
     const fileId =
       msg.document?.file_id ??
       (msg.photo && msg.photo.length ? msg.photo[msg.photo.length - 1].file_id : undefined)
 
-    if (!fileId) {
-      await telegramApi('sendMessage', {
-        chat_id: chatId,
-        text: 'Envie um arquivo (PDF, imagem ou CSV) para eu analisar. Se preferir, mande um CSV com as transações.',
+    if (fileId) {
+      const usuario = await getBotUsuario(chatId)
+      if (!usuario?.telegram_chat_id) {
+        await telegramSendMessage(chatId, 'Antes de enviar o extrato, por favor envie o código do escritório.')
+        return NextResponse.json({ ok: true })
+      }
+
+      const empresa = usuario.empresa ?? 'sua empresa'
+      const fileName = msg.document?.file_name
+      const mimeType =
+        msg.document?.mime_type ??
+        (msg.photo ? 'image/jpeg' : undefined) ??
+        (fileName?.toLowerCase().endsWith('.csv') ? 'text/csv' : undefined)
+
+      const { file_path } = await telegramGetFile(fileId)
+      const fileBuf = await telegramDownloadFile(file_path)
+
+      let extractedText = ''
+      if (mimeType === 'text/csv' || mimeType?.startsWith('text/')) {
+        extractedText = fileBuf.toString('utf8').trim()
+      } else if (mimeType === 'application/pdf') {
+        const maybeText = fileBuf.toString('utf8')
+        if (maybeText && !sniffIsProbablyBinaryUtf8(maybeText)) extractedText = maybeText.trim()
+        else {
+          extractedText = await anthropicExtractTextFromMedia({
+            mediaType: 'application/pdf',
+            base64Data: bufferToBase64(fileBuf),
+            hint: fileName,
+          })
+        }
+      } else if (mimeType?.startsWith('image/')) {
+        extractedText = await anthropicExtractTextFromMedia({
+          mediaType: mimeType,
+          base64Data: bufferToBase64(fileBuf),
+          hint: msg.caption,
+        })
+      } else {
+        const maybeText = fileBuf.toString('utf8').trim()
+        if (maybeText && !sniffIsProbablyBinaryUtf8(maybeText)) extractedText = maybeText
+        else {
+          extractedText = await anthropicExtractTextFromMedia({
+            mediaType: mimeType ?? 'application/octet-stream',
+            base64Data: bufferToBase64(fileBuf),
+            hint: fileName,
+          })
+        }
+      }
+
+      if (!extractedText || extractedText.includes('NAO_FOI_POSSIVEL_EXTRAIR_TEXTO')) {
+        await telegramSendMessage(
+          chatId,
+          'Não consegui extrair o texto do arquivo. Se puder, envie um CSV (ou texto) com as transações.',
+        )
+        return NextResponse.json({ ok: true })
+      }
+
+      await saveExtratoToSupabase({
+        texto: extractedText,
+        fileName,
+        mimeType,
+        telegramChatId: chatId,
+        empresa,
       })
+
+      const classificacao = await callInternalJson('/api/classificador', { extrato: extractedText })
+      const analise = await callInternalJson('/api/analista', { dados: classificacao })
+
+      const diagnostico = analise?.data
+      const resposta = formatDiagnosticoPt(diagnostico)
+      await telegramSendMessage(chatId, resposta)
+
       return NextResponse.json({ ok: true })
     }
 
-    const fileName = msg.document?.file_name
-    const mimeType =
-      msg.document?.mime_type ??
-      (fileName?.toLowerCase().endsWith('.csv') ? 'text/csv' : undefined)
-
-    const { file_path } = await telegramGetFile(fileId)
-    const fileBuf = await telegramDownloadFile(file_path)
-
-    let extractedText = ''
-
-    if (mimeType === 'text/csv' || mimeType?.startsWith('text/')) {
-      extractedText = fileBuf.toString('utf8').trim()
-    } else if (mimeType === 'application/pdf') {
-      const maybeText = fileBuf.toString('utf8')
-      if (maybeText && !sniffIsProbablyBinaryUtf8(maybeText)) extractedText = maybeText.trim()
-      else {
-        extractedText = await anthropicExtractTextFromMedia({
-          mediaType: 'application/pdf',
-          base64Data: bufferToBase64(fileBuf),
-          hint: fileName,
-        })
+    // 2) Texto que não é comando: cadastro por código do escritório
+    if (texto && !texto.startsWith('/')) {
+      const usuario = await getBotUsuario(chatId)
+      if (usuario?.telegram_chat_id) {
+        const nome = usuario.nome ?? 'Cliente'
+        const empresa = usuario.empresa ?? 'sua empresa'
+        await telegramSendMessage(chatId, `Olá ${nome}! Pode enviar o extrato da ${empresa}.`)
+        return NextResponse.json({ ok: true })
       }
-    } else if (mimeType?.startsWith('image/')) {
-      extractedText = await anthropicExtractTextFromMedia({
-        mediaType: mimeType,
-        base64Data: bufferToBase64(fileBuf),
-        hint: msg.caption,
-      })
-    } else {
-      const maybeText = fileBuf.toString('utf8').trim()
-      if (maybeText && !sniffIsProbablyBinaryUtf8(maybeText)) extractedText = maybeText
-      else {
-        extractedText = await anthropicExtractTextFromMedia({
-          mediaType: mimeType ?? 'application/octet-stream',
-          base64Data: bufferToBase64(fileBuf),
-          hint: fileName,
-        })
-      }
-    }
 
-    if (!extractedText || extractedText.includes('NAO_FOI_POSSIVEL_EXTRAIR_TEXTO')) {
-      await telegramApi('sendMessage', {
-        chat_id: chatId,
-        text: 'Não consegui extrair o texto do arquivo. Se puder, envie um CSV (ou texto) com as transações.',
-      })
+      const codigo = texto.trim()
+      const escritorio = await findEscritorioByCodigo(codigo)
+      if (!escritorio) {
+        await telegramSendMessage(chatId, 'Código do escritório inválido. Verifique e tente novamente.')
+        return NextResponse.json({ ok: true })
+      }
+
+      const nome = buildNomeFromFrom(msg.from)
+      const empresa = (escritorio.empresa ?? escritorio.nome ?? '').trim() || 'sua empresa'
+
+      await createBotUsuario({ chatId, nome, empresa, codigo })
+      await telegramSendMessage(chatId, `Cadastro concluído, ${nome}! Pode enviar o extrato da ${empresa}.`)
       return NextResponse.json({ ok: true })
     }
 
-    await saveExtratoToSupabase({
-      texto: extractedText,
-      fileName,
-      mimeType,
-      telegramChatId: chatId,
-      telegramMessageId: msg.message_id,
-    })
-
-    const classificacao = await callInternalJson(req, '/api/classificador', { extrato: extractedText })
-    const analise = await callInternalJson(req, '/api/analista', { dados: classificacao })
-
-    const diagnostico = analise?.data
-    const resposta = formatDiagnosticoPt(diagnostico)
-
-    await telegramApi('sendMessage', { chat_id: chatId, text: resposta })
+    // Default
+    await telegramSendMessage(chatId, 'Envie /start para começar, ou envie um arquivo (PDF, imagem ou CSV) com o extrato.')
     return NextResponse.json({ ok: true })
   } catch (error) {
     console.error('Erro no webhook telegram:', error)
-    // Telegram normalmente aceita 200 mesmo com falhas pontuais, mas aqui retornamos 500 com detalhes em dev.
     return NextResponse.json(
       {
         ok: true,
