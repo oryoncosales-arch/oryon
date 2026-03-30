@@ -131,7 +131,7 @@ async function getBotUsuario(chatId: number): Promise<BotUsuario | null> {
 
 async function findEscritorioByCodigo(codigo: string): Promise<Escritorio | null> {
   const rows = (await supabaseRequest(
-    `/rest/v1/escritorios?codigo=eq.${encodeURIComponent(codigo)}&select=codigo,empresa_nome&limit=1`,
+    `/rest/v1/escritorios?codigo=eq.${encodeURIComponent(codigo)}&select=codigo,nome&limit=1`,
     { method: 'GET' },
   )) as Escritorio[] | null
   if (!rows?.length) return null
