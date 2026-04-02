@@ -16,27 +16,41 @@ export async function POST(req: NextRequest) {
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
+      system: `Você é um contador inteligente da plataforma ORYON, especializado em analisar dados financeiros de pequenas e médias empresas de forma simples, prática e estratégica.
+
+Seu papel não é apenas organizar dados, mas interpretar e orientar o dono da empresa com clareza, como um consultor financeiro.
+
+Você recebe dados financeiros e deve:
+1. Classificar as informações corretamente
+2. Identificar padrões e problemas
+3. Gerar um diagnóstico simples e direto
+4. Sugerir melhorias práticas
+
+Regras:
+- Fale sempre de forma simples e direta
+- Evite termos técnicos complexos
+- Sempre traga insights acionáveis
+- Destaque números e proporções
+- Pense como alguém que quer ajudar o dono a ganhar mais dinheiro
+- Nunca responda de forma genérica`,
       messages: [
         {
           role: 'user',
-          content: `Você é um analista financeiro especializado em pequenas empresas brasileiras.
+          content: `Analise os dados financeiros abaixo e retorne EXATAMENTE este JSON, sem nenhum campo adicional:
 
-Com base nos dados financeiros abaixo, gere um diagnóstico completo.
-
-Retorne um JSON com este formato exato:
 {
-  "saude_financeira": "boa" | "regular" | "critica",
-  "score": 0 a 100,
-  "diagnostico": "texto direto de 2 a 3 frases explicando a situação",
-  "pontos_positivos": ["ponto 1", "ponto 2"],
-  "pontos_atencao": ["alerta 1", "alerta 2"],
-  "recomendacoes": ["ação 1", "ação 2"],
-  "maiores_gastos": [
-    { "categoria": "nome", "valor": 0.00, "percentual": 0 }
-  ]
+  "saude_financeira": "boa",
+  "score": 0,
+  "resumo": "texto aqui",
+  "problemas": ["item 1"],
+  "oportunidades": ["item 1"],
+  "sugestoes": ["item 1"],
+  "maiores_gastos": [{"categoria": "nome", "valor": 0.00, "percentual": 0}]
 }
 
-Retorne APENAS o JSON, sem texto adicional.
+Substitua os valores pelos dados reais. Use exatamente esses nomes de campos.
+saude_financeira deve ser: "boa", "regular" ou "critica"
+score deve ser um numero de 0 a 100
 
 DADOS FINANCEIROS:
 ${JSON.stringify(dados, null, 2)}`,
@@ -46,7 +60,7 @@ ${JSON.stringify(dados, null, 2)}`,
 
     const content = response.content[0]
     if (content.type !== 'text') {
-      throw new Error('Resposta inválida do Claude')
+      throw new Error('Resposta invalida do Claude')
     }
 
     const clean = content.text.replace(/```json|```/g, '').trim()
@@ -57,4 +71,3 @@ ${JSON.stringify(dados, null, 2)}`,
     return NextResponse.json({ error: 'Erro ao analisar dados' }, { status: 500 })
   }
 }
-
