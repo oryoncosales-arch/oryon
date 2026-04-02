@@ -1,9 +1,9 @@
 {
   "functions": {
-    "src/app/api/analista/route.ts": {
+    "app/api/analista/route.ts": {
       "maxDuration": 60
     },
-    "src/app/api/classificador/route.ts": {
+    "app/api/classificador/route.ts": {
       "maxDuration": 60
     }
   }
