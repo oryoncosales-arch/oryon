@@ -476,32 +476,12 @@ export default function DashboardClient(props: {
   }, [props.empresas]);
 
   const hoje = useMemo(() => startOfDay(new Date()), []);
-  const limite30 = useMemo(() => addDays(hoje, 30), [hoje]);
   const limite7 = useMemo(() => addDays(hoje, 7), [hoje]);
 
   const contratosAtivos = useMemo(
     () => props.contratos.filter((c) => c.status === "ativo"),
     [props.contratos],
   );
-
-  const metricasEscritorio = useMemo(() => {
-    const ativos = props.contratos.filter((c) => c.status === "ativo");
-    const clientesAtivos = ativos.length;
-    const mrr = ativos.reduce((s, c) => s + Number(c.valor_mensal || 0), 0);
-    const inadimplentes = props.contratos.filter(
-      (c) => c.status === "inadimplente",
-    ).length;
-
-    let aReceber30 = 0;
-    for (const c of ativos) {
-      const due = nextDueDate(c.dia_vencimento, hoje);
-      if (due >= hoje && due <= limite30) {
-        aReceber30 += Number(c.valor_mensal || 0);
-      }
-    }
-
-    return { clientesAtivos, mrr, inadimplentes, aReceber30 };
-  }, [props.contratos, hoje, limite30]);
 
   const ultimosContratos = useMemo(
     () =>
@@ -526,6 +506,106 @@ export default function DashboardClient(props: {
     }
     return out.sort((a, b) => a.due.getTime() - b.due.getTime());
   }, [contratosAtivos, hoje, limite7]);
+
+  const visaoGeralKpis = useMemo(() => {
+    const ref = new Date();
+    const ano = ref.getFullYear();
+    const mes = ref.getMonth();
+
+    const ativos = props.contratos.filter((c) => c.status === "ativo");
+    const mrr = ativos.reduce((s, c) => s + Number(c.valor_mensal || 0), 0);
+    const nAtivos = ativos.length;
+    const ticketMedio = nAtivos > 0 ? mrr / nAtivos : 0;
+
+    const inadimplentesList = props.contratos.filter(
+      (c) => c.status === "inadimplente",
+    );
+    const somaInadimplente = inadimplentesList.reduce(
+      (s, c) => s + Number(c.valor_mensal || 0),
+      0,
+    );
+    const taxaInadimplenciaPct =
+      mrr > 0 ? (somaInadimplente / mrr) * 100 : 0;
+
+    const projecao90 = mrr * 3;
+
+    const createdNoMesAtual = (created_at: string | undefined) => {
+      if (!created_at) return false;
+      const d = new Date(created_at);
+      return d.getFullYear() === ano && d.getMonth() === mes;
+    };
+
+    const novosEsteMes = props.contratos.filter((c) =>
+      createdNoMesAtual(c.created_at),
+    ).length;
+    const cancelamentosEsteMes = props.contratos.filter(
+      (c) => c.status === "cancelado" && createdNoMesAtual(c.created_at),
+    ).length;
+
+    const baseChurn = props.contratos.filter(
+      (c) => c.status === "ativo" || c.status === "cancelado",
+    ).length;
+    const churnRatePct =
+      baseChurn > 0 ? (cancelamentosEsteMes / baseChurn) * 100 : 0;
+
+    let vencendoEm7Dias = 0;
+    for (const c of ativos) {
+      const due = nextDueDate(c.dia_vencimento, hoje);
+      if (due >= hoje && due <= limite7) vencendoEm7Dias += 1;
+    }
+
+    const inadimplentesCount = inadimplentesList.length;
+    const ltvMedio = ticketMedio * 12;
+    const totalEmpresas = props.empresas.length;
+
+    return {
+      mrr,
+      ticketMedio,
+      taxaInadimplenciaPct,
+      projecao90,
+      nAtivos,
+      novosEsteMes,
+      cancelamentosEsteMes,
+      churnRatePct,
+      vencendoEm7Dias,
+      inadimplentesCount,
+      ltvMedio,
+      totalEmpresas,
+    };
+  }, [props.contratos, props.empresas, hoje, limite7]);
+
+  const mrrPorMesChart = useMemo(() => {
+    const now = new Date();
+    const rows: { label: string; value: number }[] = [];
+    for (let i = 5; i >= 0; i -= 1) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const y = d.getFullYear();
+      const m = d.getMonth();
+      const label = d.toLocaleDateString("pt-BR", {
+        month: "short",
+        year: "2-digit",
+      });
+      const value = props.contratos
+        .filter((c) => {
+          if (c.status !== "ativo") return false;
+          const di = new Date(c.data_inicio);
+          return di.getFullYear() === y && di.getMonth() === m;
+        })
+        .reduce((s, c) => s + Number(c.valor_mensal || 0), 0);
+      rows.push({ label, value });
+    }
+    const max = Math.max(...rows.map((r) => r.value), 1);
+    return { rows, max };
+  }, [props.contratos]);
+
+  const pct1 = useMemo(
+    () =>
+      new Intl.NumberFormat("pt-BR", {
+        minimumFractionDigits: 1,
+        maximumFractionDigits: 1,
+      }),
+    [],
+  );
 
   useEffect(() => {
     setTransacoes(null);
@@ -1114,34 +1194,239 @@ export default function DashboardClient(props: {
             <section className="space-y-6">
               <div>
                 <h1 className="text-2xl font-semibold">Visão geral</h1>
-                <p className="mt-1 text-sm text-white/50">Métricas do escritório</p>
+                <p className="mt-1 text-sm text-white/50">
+                  Atualizado em{" "}
+                  {new Date().toLocaleDateString("pt-BR", {
+                    day: "2-digit",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
-                  <div className="text-xs text-white/50">Clientes ativos</div>
-                  <div className="mt-2 text-2xl font-semibold text-[#5DCAA5]">
-                    {metricasEscritorio.clientesAtivos}
+
+              <div>
+                <h2 className="text-xs font-medium uppercase tracking-wide text-white/30 mb-2">
+                  Financeiro
+                </h2>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">MRR</div>
+                    <div className="mt-1 text-2xl font-semibold text-[#5DCAA5]">
+                      {money.format(visaoGeralKpis.mrr)}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">
+                      Receita mensal recorrente
+                    </div>
                   </div>
-                </div>
-                <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
-                  <div className="text-xs text-white/50">MRR</div>
-                  <div className="mt-2 text-2xl font-semibold text-[#5DCAA5]">
-                    {money.format(metricasEscritorio.mrr)}
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">Ticket médio</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {money.format(visaoGeralKpis.ticketMedio)}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Por cliente ativo</div>
                   </div>
-                </div>
-                <div className="rounded-2xl border border-red-500/20 bg-white/5 p-4">
-                  <div className="text-xs text-white/50">Inadimplentes</div>
-                  <div className="mt-2 text-2xl font-semibold text-red-400">
-                    {metricasEscritorio.inadimplentes}
+                  <div
+                    className={clsx(
+                      "rounded-2xl border bg-white/5 p-4",
+                      visaoGeralKpis.taxaInadimplenciaPct > 10
+                        ? "border-red-500/20"
+                        : visaoGeralKpis.taxaInadimplenciaPct > 0
+                          ? "border-[#EAB308]/20"
+                          : "border-[#1D9E75]/20",
+                    )}
+                  >
+                    <div className="text-xs text-white/50">Taxa de inadimplência</div>
+                    <div
+                      className={clsx(
+                        "mt-1 text-2xl font-semibold",
+                        visaoGeralKpis.taxaInadimplenciaPct > 10
+                          ? "text-red-400"
+                          : visaoGeralKpis.taxaInadimplenciaPct > 0
+                            ? "text-[#EAB308]"
+                            : "text-[#5DCAA5]",
+                      )}
+                    >
+                      {pct1.format(visaoGeralKpis.taxaInadimplenciaPct)}%
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Do MRR em risco</div>
                   </div>
-                </div>
-                <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
-                  <div className="text-xs text-white/50">A receber (30 dias)</div>
-                  <div className="mt-2 text-2xl font-semibold text-white">
-                    {money.format(metricasEscritorio.aReceber30)}
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">Projeção 90 dias</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {money.format(visaoGeralKpis.projecao90)}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Receita projetada</div>
                   </div>
                 </div>
               </div>
+
+              <div>
+                <h2 className="text-xs font-medium uppercase tracking-wide text-white/30 mb-2">
+                  Carteira
+                </h2>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">Clientes ativos</div>
+                    <div className="mt-1 text-2xl font-semibold text-[#5DCAA5]">
+                      {visaoGeralKpis.nAtivos}
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">Novos este mês</div>
+                    <div className="mt-1 text-2xl font-semibold text-[#5DCAA5]">
+                      {visaoGeralKpis.novosEsteMes}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Contratos iniciados</div>
+                  </div>
+                  <div
+                    className={clsx(
+                      "rounded-2xl border bg-white/5 p-4",
+                      visaoGeralKpis.cancelamentosEsteMes > 0
+                        ? "border-red-500/20"
+                        : "border-white/10",
+                    )}
+                  >
+                    <div className="text-xs text-white/50">Cancelamentos este mês</div>
+                    <div
+                      className={clsx(
+                        "mt-1 text-2xl font-semibold",
+                        visaoGeralKpis.cancelamentosEsteMes > 0
+                          ? "text-red-400"
+                          : "text-white",
+                      )}
+                    >
+                      {visaoGeralKpis.cancelamentosEsteMes}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Neste mês</div>
+                  </div>
+                  <div
+                    className={clsx(
+                      "rounded-2xl border bg-white/5 p-4",
+                      visaoGeralKpis.churnRatePct > 5
+                        ? "border-red-500/20"
+                        : visaoGeralKpis.churnRatePct > 0
+                          ? "border-[#EAB308]/20"
+                          : "border-[#1D9E75]/20",
+                    )}
+                  >
+                    <div className="text-xs text-white/50">Churn rate</div>
+                    <div
+                      className={clsx(
+                        "mt-1 text-2xl font-semibold",
+                        visaoGeralKpis.churnRatePct > 5
+                          ? "text-red-400"
+                          : visaoGeralKpis.churnRatePct > 0
+                            ? "text-[#EAB308]"
+                            : "text-[#5DCAA5]",
+                      )}
+                    >
+                      {pct1.format(visaoGeralKpis.churnRatePct)}%
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Taxa de cancelamento</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <h2 className="text-xs font-medium uppercase tracking-wide text-white/30 mb-2">
+                  Alertas
+                </h2>
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => irEscritorio("cobrancas")}
+                    className={clsx(
+                      "rounded-2xl border bg-white/5 p-4 text-left transition-colors cursor-pointer hover:border-[#1D9E75]/40",
+                      visaoGeralKpis.vencendoEm7Dias > 0
+                        ? "border-[#EAB308]/20"
+                        : "border-[#1D9E75]/20",
+                    )}
+                  >
+                    <div className="text-xs text-white/50">Vencendo em 7 dias</div>
+                    <div
+                      className={clsx(
+                        "mt-1 text-2xl font-semibold",
+                        visaoGeralKpis.vencendoEm7Dias > 0
+                          ? "text-[#EAB308]"
+                          : "text-[#5DCAA5]",
+                      )}
+                    >
+                      {visaoGeralKpis.vencendoEm7Dias}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Cobranças pendentes</div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => irEscritorio("contratos")}
+                    className={clsx(
+                      "rounded-2xl border bg-white/5 p-4 text-left transition-colors cursor-pointer hover:border-[#1D9E75]/40",
+                      visaoGeralKpis.inadimplentesCount > 0
+                        ? "border-red-500/20"
+                        : "border-[#1D9E75]/20",
+                    )}
+                  >
+                    <div className="text-xs text-white/50">Inadimplentes</div>
+                    <div
+                      className={clsx(
+                        "mt-1 text-2xl font-semibold",
+                        visaoGeralKpis.inadimplentesCount > 0
+                          ? "text-red-400"
+                          : "text-[#5DCAA5]",
+                      )}
+                    >
+                      {visaoGeralKpis.inadimplentesCount}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Contratos em atraso</div>
+                  </button>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">LTV médio</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {money.format(visaoGeralKpis.ltvMedio)}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Valor anual por cliente</div>
+                  </div>
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                    <div className="text-xs text-white/50">Total sob gestão</div>
+                    <div className="mt-1 text-2xl font-semibold text-white">
+                      {visaoGeralKpis.totalEmpresas}
+                    </div>
+                    <div className="mt-1 text-xs text-white/40">Empresas na plataforma</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                <div className="text-sm font-medium text-white/80">MRR por mês de início</div>
+                <p className="mt-1 text-xs text-white/40 mb-4">
+                  Contratos ativos — soma do valor mensal por mês de{" "}
+                  <span className="text-white/50">data_inicio</span> (últimos 6 meses)
+                </p>
+                <div className="flex items-end justify-between gap-2">
+                  {mrrPorMesChart.rows.map((row) => {
+                    const barH = Math.round(
+                      Math.max(4, (row.value / mrrPorMesChart.max) * 120),
+                    );
+                    return (
+                      <div
+                        key={row.label}
+                        className="flex flex-1 flex-col items-center gap-2 min-w-0"
+                      >
+                        <div className="h-[120px] w-full flex items-end justify-center">
+                          <div
+                            className="w-full max-w-[48px] rounded-t-md bg-[#1D9E75]/80 transition-all"
+                            style={{ height: `${barH}px` }}
+                            title={money.format(row.value)}
+                          />
+                        </div>
+                        <span className="text-[10px] text-white/45 text-center leading-tight px-0.5">
+                          {row.label}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
                 <div className="px-4 py-3 border-b border-white/10 text-sm font-medium text-white/70">
                   Últimos contratos
