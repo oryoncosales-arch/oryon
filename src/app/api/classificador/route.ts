@@ -1,79 +1,116 @@
 export const maxDuration = 60;
 
 import { NextRequest, NextResponse } from "next/server";
+import Anthropic from "@anthropic-ai/sdk";
 
-type Transacao = {
-  data: string;
-  descricao: string;
-  valor: number;
-  tipo: "entrada" | "saida";
-  categoria: string;
-};
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-const CATEGORIAS: { padrao: RegExp; categoria: string }[] = [
-  { padrao: /PAGAMENTO\s+CLIENTE|RECEBIMENTO|DEPOSITO|PIX\s+RECEBIDO/i, categoria: "Receita" },
-  { padrao: /SALARIO|FOLHA|FUNCIONARIO|RH/i, categoria: "Folha de Pagamento" },
-  { padrao: /BOLETO\s+FORNECEDOR|FORNECEDOR|COMPRA/i, categoria: "Fornecedores" },
-  { padrao: /TAXA|TARIFA|IOF|JUROS|BANCARIA/i, categoria: "Taxas Bancárias" },
-  { padrao: /ALUGUEL|CONDOMINIO/i, categoria: "Aluguel" },
-  { padrao: /ENERGIA|AGUA|TELEFONE|INTERNET|LIGHT/i, categoria: "Utilities" },
-  { padrao: /IMPOSTO|DAS|DARF|INSS|FGTS|TRIBUTO/i, categoria: "Impostos" },
-  { padrao: /TRANSFERENCIA|TED|DOC/i, categoria: "Transferência" },
-];
+const SYSTEM_PROMPT = `Você é um classificador financeiro especializado em extratos bancários brasileiros.
+Receba as linhas do extrato e retorne APENAS um JSON array válido.
+Cada objeto deve ter exatamente estes campos:
+- data: string no formato YYYY-MM-DD
+- descricao: string com a descrição da transação
+- valor: number positivo
+- tipo: "entrada" ou "saida"
+- categoria: uma das opções: "Receita" | "Despesa Operacional" | "Folha de Pagamento" | "Impostos" | "Fornecedores" | "Aluguel" | "Utilities" | "Taxas Bancárias" | "Transferência" | "Outros"
 
-function classificarLinha(linha: string): Transacao | null {
-  const linha_trim = linha.trim();
-  if (!linha_trim) return null;
-
-  // Formato esperado: DD/MM/AAAA DESCRICAO VALOR
-  const match = linha_trim.match(
-    /^(\d{2}\/\d{2}\/\d{4})\s+(.+?)\s+([-+]?\d+(?:[.,]\d{2})?)$/
-  );
-  if (!match) return null;
-
-  const [, data, descricao, valorStr] = match;
-  const valor = parseFloat(valorStr.replace(",", "."));
-
-  let categoria = "Outros";
-  for (const { padrao, categoria: cat } of CATEGORIAS) {
-    if (padrao.test(descricao)) {
-      categoria = cat;
-      break;
-    }
-  }
-
-  return {
-    data,
-    descricao: descricao.trim(),
-    valor: Math.abs(valor),
-    tipo: valor < 0 ? "saida" : "entrada",
-    categoria,
-  };
-}
+Regras:
+- Se o valor for negativo no extrato, tipo = "saida" e valor = Math.abs(valor)
+- Se o valor for positivo, tipo = "entrada"
+- Interprete datas em qualquer formato brasileiro e converta para YYYY-MM-DD
+- Se uma linha não for uma transação válida, ignore
+- Retorne APENAS o JSON array, sem markdown, sem explicação, sem texto adicional`;
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
+    const body = (await req.json()) as unknown;
+    const extrato =
+      typeof body === "object" && body !== null && "extrato" in body
+        ? (body as any).extrato
+        : undefined;
+    const arquivo =
+      typeof body === "object" && body !== null && "arquivo" in body
+        ? (body as any).arquivo
+        : undefined;
+    const tipo =
+      typeof body === "object" && body !== null && "tipo" in body
+        ? (body as any).tipo
+        : undefined;
 
-    if (!body.extrato || typeof body.extrato !== "string") {
+    const hasText = typeof extrato === "string" && extrato.trim().length > 0;
+    const hasFile =
+      typeof arquivo === "string" &&
+      arquivo.trim().length > 0 &&
+      typeof tipo === "string" &&
+      tipo.trim().length > 0;
+
+    if (!hasText && !hasFile) {
       return NextResponse.json(
-        { erro: 'Campo "extrato" é obrigatório e deve ser uma string.' },
+        { erro: "Envie { extrato: string } ou { arquivo: base64, tipo: mime }." },
         { status: 400 }
       );
     }
 
-    const linhas = body.extrato.split("\n");
-    const transacoes: Transacao[] = [];
-    const naoClassificadas: string[] = [];
+    const userContent: any = hasText
+      ? `Classifique este extrato bancário:\n\n${extrato}`
+      : [
+          tipo === "application/pdf"
+            ? {
+                type: "document",
+                source: {
+                  type: "base64",
+                  media_type: "application/pdf",
+                  data: arquivo,
+                },
+              }
+            : {
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: tipo,
+                  data: arquivo,
+                },
+              },
+          {
+            type: "text",
+            text: "Classifique este extrato bancário.",
+          },
+        ];
 
-    for (const linha of linhas) {
-      const transacao = classificarLinha(linha);
-      if (transacao) {
-        transacoes.push(transacao);
-      } else if (linha.trim()) {
-        naoClassificadas.push(linha.trim());
+    const response = await client.messages.create({
+      model: "claude-sonnet-4-6",
+      max_tokens: 8000,
+      system: SYSTEM_PROMPT,
+      messages: [
+        {
+          role: "user",
+          content: userContent,
+        },
+      ],
+    });
+
+    const content = response.content[0];
+    if (content.type !== "text") throw new Error("Resposta inválida");
+
+    let transacoes;
+    try {
+      const clean = content.text.replace(/```json|```/g, "").trim();
+      // Se o JSON foi cortado, tenta encontrar o último objeto completo
+      const lastBracket = clean.lastIndexOf("}");
+      const fixedClean =
+        lastBracket !== -1 ? clean.slice(0, lastBracket + 1) + "]" : clean;
+      const jsonStr = fixedClean.startsWith("[") ? fixedClean : "[" + fixedClean;
+      transacoes = JSON.parse(jsonStr);
+    } catch {
+      // Tenta parse direto como fallback
+      try {
+        transacoes = JSON.parse(content.text);
+      } catch {
+        throw new Error("Não foi possível interpretar a resposta do classificador.");
       }
     }
+
+    if (!Array.isArray(transacoes)) throw new Error("Formato inválido");
 
     const totalEntradas = transacoes
       .filter((t) => t.tipo === "entrada")
@@ -83,13 +120,10 @@ export async function POST(req: NextRequest) {
       .filter((t) => t.tipo === "saida")
       .reduce((acc, t) => acc + t.valor, 0);
 
-    const resumoPorCategoria = transacoes.reduce<Record<string, number>>(
-      (acc, t) => {
-        acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
-        return acc;
-      },
-      {}
-    );
+    const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
+      acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
+      return acc;
+    }, {});
 
     return NextResponse.json({
       transacoes,
@@ -97,11 +131,14 @@ export async function POST(req: NextRequest) {
         totalEntradas,
         totalSaidas,
         saldo: totalEntradas - totalSaidas,
-        porCategoria: resumoPorCategoria,
+        porCategoria,
       },
-      naoClassificadas,
     });
-  } catch {
-    return NextResponse.json({ erro: "Erro ao processar o extrato." }, { status: 500 });
+  } catch (error) {
+    console.error("Erro no classificador:", error);
+    return NextResponse.json(
+      { erro: "Erro ao classificar extrato." },
+      { status: 500 }
+    );
   }
 }
