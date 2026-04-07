@@ -21,6 +21,11 @@ type Empresa = {
   escritorio_id: string;
   nome: string;
   cnpj?: string | null;
+  razao_social?: string | null;
+  nome_dono?: string | null;
+  email?: string | null;
+  whatsapp?: string | null;
+  regime_tributario?: string | null;
   created_at?: string;
 };
 
@@ -587,24 +592,20 @@ export default function DashboardClient(props: {
     [empresaSelecionadaId, props.empresas],
   );
 
-  const [modalEmpresa, setModalEmpresa] = useState(false);
-  const [novaEmpresaNome, setNovaEmpresaNome] = useState("");
-  const [novaEmpresaCnpj, setNovaEmpresaCnpj] = useState("");
-  const [salvandoEmpresa, setSalvandoEmpresa] = useState(false);
-
-  const [modalContrato, setModalContrato] = useState(false);
-  const [novoContratoEmpresaId, setNovoContratoEmpresaId] = useState("");
-  const [novoContratoValor, setNovoContratoValor] = useState("");
-  const [novoContratoDia, setNovoContratoDia] = useState("");
-  const [novoContratoInicio, setNovoContratoInicio] = useState("");
-  const [novoContratoNomeResponsavel, setNovoContratoNomeResponsavel] = useState("");
-  const [novoContratoEmail, setNovoContratoEmail] = useState("");
-  const [novoContratoWhatsapp, setNovoContratoWhatsapp] = useState("");
-  const [novoContratoTipoServico, setNovoContratoTipoServico] = useState("");
-  const [novoContratoRegime, setNovoContratoRegime] = useState("");
-  const [novoContratoFormaPagamento, setNovoContratoFormaPagamento] = useState("");
-  const [novoContratoObservacoes, setNovoContratoObservacoes] = useState("");
-  const [salvandoContrato, setSalvandoContrato] = useState(false);
+  const [modalNovoCliente, setModalNovoCliente] = useState(false);
+  const [novoClienteRazaoSocial, setNovoClienteRazaoSocial] = useState("");
+  const [novoClienteCnpj, setNovoClienteCnpj] = useState("");
+  const [novoClienteNomeDono, setNovoClienteNomeDono] = useState("");
+  const [novoClienteWhatsapp, setNovoClienteWhatsapp] = useState("");
+  const [novoClienteEmail, setNovoClienteEmail] = useState("");
+  const [novoClienteValor, setNovoClienteValor] = useState("");
+  const [novoClienteDia, setNovoClienteDia] = useState("");
+  const [novoClienteInicio, setNovoClienteInicio] = useState("");
+  const [novoClienteFormaPagamento, setNovoClienteFormaPagamento] = useState("");
+  const [novoClienteTipoServico, setNovoClienteTipoServico] = useState("");
+  const [novoClienteRegime, setNovoClienteRegime] = useState("");
+  const [novoClienteObservacoes, setNovoClienteObservacoes] = useState("");
+  const [salvandoCliente, setSalvandoCliente] = useState(false);
 
   const [editingContratoId, setEditingContratoId] = useState<string | null>(null);
   const [avisosEnviados, setAvisosEnviados] = useState<Record<string, boolean>>({});
@@ -893,54 +894,64 @@ export default function DashboardClient(props: {
     setAbaEmpresa("upload");
   }
 
-  async function salvarNovaEmpresa() {
+  function abrirModalNovoCliente() {
     setErro(null);
-    if (!podeGerirEscritorio) {
-      setErro("Sem permissão para criar empresa.");
-      return;
-    }
-    const nome = novaEmpresaNome.trim();
-    if (!nome) {
-      setErro("Nome da empresa é obrigatório.");
-      return;
-    }
-    setSalvandoEmpresa(true);
-    try {
-      const cnpjDigits = novaEmpresaCnpj.replace(/\D/g, "");
-      const { data, error } = await supabase
-        .from("empresas")
-        .insert({
-          escritorio_id: props.escritorio.id,
-          nome,
-          cnpj: cnpjDigits.length ? cnpjDigits : null,
-        })
-        .select("id")
-        .single();
-      if (error) throw new Error(error.message);
-      setModalEmpresa(false);
-      setNovaEmpresaNome("");
-      setNovaEmpresaCnpj("");
-      router.refresh();
-      if (data?.id) {
-        setEmpresaSelecionadaId(data.id);
-        setSecao("empresa");
-        setAbaEmpresa("upload");
-      }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao criar empresa.");
-    } finally {
-      setSalvandoEmpresa(false);
-    }
+    setNovoClienteRazaoSocial("");
+    setNovoClienteCnpj("");
+    setNovoClienteNomeDono("");
+    setNovoClienteWhatsapp("");
+    setNovoClienteEmail("");
+    setNovoClienteValor("");
+    setNovoClienteDia("");
+    setNovoClienteInicio("");
+    setNovoClienteFormaPagamento("");
+    setNovoClienteTipoServico("");
+    setNovoClienteRegime("");
+    setNovoClienteObservacoes("");
+    setModalNovoCliente(true);
   }
 
-  async function salvarNovoContrato() {
+  function fecharModalNovoCliente() {
+    setModalNovoCliente(false);
+    setNovoClienteRazaoSocial("");
+    setNovoClienteCnpj("");
+    setNovoClienteNomeDono("");
+    setNovoClienteWhatsapp("");
+    setNovoClienteEmail("");
+    setNovoClienteValor("");
+    setNovoClienteDia("");
+    setNovoClienteInicio("");
+    setNovoClienteFormaPagamento("");
+    setNovoClienteTipoServico("");
+    setNovoClienteRegime("");
+    setNovoClienteObservacoes("");
+  }
+
+  async function salvarNovoCliente() {
     setErro(null);
-    if (!novoContratoEmpresaId) {
-      setErro("Selecione uma empresa.");
+    if (!podeGerirEscritorio) {
+      setErro("Sem permissão para criar cliente.");
       return;
     }
-    const valor = Number(String(novoContratoValor).replace(",", "."));
-    const dia = parseInt(novoContratoDia, 10);
+
+    const razao_social = novoClienteRazaoSocial.trim();
+    const nome_dono = novoClienteNomeDono.trim();
+    const email = novoClienteEmail.trim() || null;
+    const whatsapp = novoClienteWhatsapp.trim() || null;
+    const cnpjDigits = novoClienteCnpj.replace(/\D/g, "");
+    const cnpj = cnpjDigits.length ? cnpjDigits : null;
+
+    const valor = Number(String(novoClienteValor).replace(",", "."));
+    const dia = parseInt(novoClienteDia, 10);
+
+    if (!razao_social) {
+      setErro("Razão social é obrigatória.");
+      return;
+    }
+    if (!nome_dono) {
+      setErro("Nome do responsável/dono é obrigatório.");
+      return;
+    }
     if (!Number.isFinite(valor) || valor <= 0) {
       setErro("Valor mensal inválido.");
       return;
@@ -949,60 +960,58 @@ export default function DashboardClient(props: {
       setErro("Dia de vencimento deve ser entre 1 e 31.");
       return;
     }
-    if (!novoContratoInicio) {
+    if (!novoClienteInicio) {
       setErro("Informe a data de início.");
       return;
     }
-    setSalvandoContrato(true);
+
+    setSalvandoCliente(true);
     try {
-      const { error } = await supabase.from("contratos").insert({
-        empresa_id: novoContratoEmpresaId,
+      const { data: empresa, error: empErr } = await supabase
+        .from("empresas")
+        .insert({
+          escritorio_id: props.escritorio.id,
+          nome: razao_social,
+          razao_social,
+          cnpj,
+          nome_dono,
+          email,
+          whatsapp,
+          regime_tributario: novoClienteRegime || null,
+        })
+        .select("id")
+        .single();
+
+      if (empErr) throw new Error(empErr.message);
+      if (!empresa?.id) throw new Error("Falha ao criar empresa.");
+
+      const { error: contratoErr } = await supabase.from("contratos").insert({
+        empresa_id: empresa.id,
+        escritorio_id: props.escritorio.id,
         valor_mensal: valor,
         dia_vencimento: dia,
-        data_inicio: novoContratoInicio,
+        data_inicio: novoClienteInicio,
+        tipo_servico: novoClienteTipoServico || null,
+        regime_tributario: novoClienteRegime || null,
+        forma_pagamento: novoClienteFormaPagamento || null,
+        email_cliente: email,
+        nome_responsavel: nome_dono,
+        observacoes: novoClienteObservacoes.trim() || null,
         status: "ativo",
-        nome_responsavel: novoContratoNomeResponsavel.trim() || null,
-        email_cliente: novoContratoEmail.trim() || null,
-        whatsapp: novoContratoWhatsapp.trim() || null,
-        tipo_servico: novoContratoTipoServico || null,
-        regime_tributario: novoContratoRegime || null,
-        forma_pagamento: novoContratoFormaPagamento || null,
-        observacoes: novoContratoObservacoes.trim() || null,
       });
-      if (error) throw new Error(error.message);
-      setModalContrato(false);
-      setNovoContratoEmpresaId("");
-      setNovoContratoValor("");
-      setNovoContratoDia("");
-      setNovoContratoInicio("");
-      setNovoContratoNomeResponsavel("");
-      setNovoContratoEmail("");
-      setNovoContratoWhatsapp("");
-      setNovoContratoTipoServico("");
-      setNovoContratoRegime("");
-      setNovoContratoFormaPagamento("");
-      setNovoContratoObservacoes("");
-      router.refresh();
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : "Erro ao criar contrato.");
-    } finally {
-      setSalvandoContrato(false);
-    }
-  }
 
-  function fecharModalContrato() {
-    setModalContrato(false);
-    setNovoContratoEmpresaId("");
-    setNovoContratoValor("");
-    setNovoContratoDia("");
-    setNovoContratoInicio("");
-    setNovoContratoNomeResponsavel("");
-    setNovoContratoEmail("");
-    setNovoContratoWhatsapp("");
-    setNovoContratoTipoServico("");
-    setNovoContratoRegime("");
-    setNovoContratoFormaPagamento("");
-    setNovoContratoObservacoes("");
+      if (contratoErr) throw new Error(contratoErr.message);
+
+      fecharModalNovoCliente();
+      router.refresh();
+      setEmpresaSelecionadaId(empresa.id);
+      setSecao("empresa");
+      setAbaEmpresa("upload");
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao criar cliente.");
+    } finally {
+      setSalvandoCliente(false);
+    }
   }
 
   async function atualizarStatusContrato(id: string, status: ContratoStatus) {
@@ -1614,21 +1623,27 @@ export default function DashboardClient(props: {
 
   return (
     <div className="min-h-screen bg-[#080808] text-white flex">
-      {modalEmpresa ? (
+      {modalNovoCliente ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
           style={{ background: "rgba(0,0,0,0.7)" }}
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
-            <div className="text-lg font-semibold">Nova empresa</div>
-            <div className="mt-4 space-y-3">
+          <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Novo cliente</div>
+            <div className="mt-5 grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
+                  Dados da empresa
+                </div>
+              </div>
+
               <div>
-                <label className="block text-xs text-white/50 mb-1">Nome da empresa</label>
+                <label className="block text-xs text-white/50 mb-1">Razão social</label>
                 <input
-                  value={novaEmpresaNome}
-                  onChange={(e) => setNovaEmpresaNome(e.target.value)}
+                  value={novoClienteRazaoSocial}
+                  onChange={(e) => setNovoClienteRazaoSocial(e.target.value)}
                   className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
                   placeholder="Razão social"
                 />
@@ -1636,193 +1651,130 @@ export default function DashboardClient(props: {
               <div>
                 <label className="block text-xs text-white/50 mb-1">CNPJ (opcional)</label>
                 <input
-                  value={novaEmpresaCnpj}
-                  onChange={(e) => setNovaEmpresaCnpj(formatCnpjDigits(e.target.value))}
+                  value={novoClienteCnpj}
+                  onChange={(e) => setNovoClienteCnpj(formatCnpjDigits(e.target.value))}
                   className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
                   placeholder="00.000.000/0000-00"
                 />
               </div>
-            </div>
-            <div className="mt-6 flex gap-2 justify-end">
-              <button
-                type="button"
-                onClick={() => setModalEmpresa(false)}
-                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
-              >
-                Cancelar
-              </button>
-              <button
-                type="button"
-                disabled={salvandoEmpresa}
-                onClick={() => void salvarNovaEmpresa()}
-                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
-              >
-                {salvandoEmpresa ? "Salvando..." : "Adicionar"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {modalContrato ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center px-4"
-          style={{ background: "rgba(0,0,0,0.7)" }}
-          role="dialog"
-          aria-modal="true"
-        >
-          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
-            <div className="text-lg font-semibold">Novo contrato</div>
-            <div className="mt-4 space-y-5">
               <div>
-                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
-                  Empresa
+                <label className="block text-xs text-white/50 mb-1">
+                  Nome do responsável/dono
+                </label>
+                <input
+                  value={novoClienteNomeDono}
+                  onChange={(e) => setNovoClienteNomeDono(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="Nome"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">WhatsApp (opcional)</label>
+                <input
+                  value={novoClienteWhatsapp}
+                  onChange={(e) => setNovoClienteWhatsapp(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="11999999999"
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Email do responsável (opcional)</label>
+                <input
+                  type="email"
+                  value={novoClienteEmail}
+                  onChange={(e) => setNovoClienteEmail(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="email@cliente.com.br"
+                />
+              </div>
+
+              <div className="col-span-2 mt-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
+                  Dados do contrato
                 </div>
-                <label className="block text-xs text-white/50 mb-1">Empresa</label>
+              </div>
+
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Valor mensal R$</label>
+                <input
+                  value={novoClienteValor}
+                  onChange={(e) => setNovoClienteValor(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="1500,00"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Dia de vencimento (1-31)</label>
+                <input
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={novoClienteDia}
+                  onChange={(e) => setNovoClienteDia(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="10"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Data de início</label>
+                <input
+                  type="date"
+                  value={novoClienteInicio}
+                  onChange={(e) => setNovoClienteInicio(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Forma de pagamento</label>
                 <select
-                  value={novoContratoEmpresaId}
-                  onChange={(e) => setNovoContratoEmpresaId(e.target.value)}
+                  value={novoClienteFormaPagamento}
+                  onChange={(e) => setNovoClienteFormaPagamento(e.target.value)}
                   className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
                 >
                   <option value="">Selecione...</option>
-                  {props.empresas.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.nome}
-                    </option>
-                  ))}
+                  <option value="PIX">PIX</option>
+                  <option value="Boleto">Boleto</option>
+                  <option value="Transferência">Transferência</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Tipo de serviço</label>
+                <select
+                  value={novoClienteTipoServico}
+                  onChange={(e) => setNovoClienteTipoServico(e.target.value)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="Contabilidade">Contabilidade</option>
+                  <option value="Folha de pagamento">Folha de pagamento</option>
+                  <option value="Fiscal">Fiscal</option>
+                  <option value="Consultoria">Consultoria</option>
+                  <option value="Completo">Completo</option>
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Regime tributário</label>
+                <select
+                  value={novoClienteRegime}
+                  onChange={(e) => setNovoClienteRegime(e.target.value)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="MEI">MEI</option>
+                  <option value="Simples Nacional">Simples Nacional</option>
+                  <option value="Lucro Presumido">Lucro Presumido</option>
+                  <option value="Lucro Real">Lucro Real</option>
                 </select>
               </div>
 
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
-                  Responsável
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">
-                      Nome do responsável (opcional)
-                    </label>
-                    <input
-                      value={novoContratoNomeResponsavel}
-                      onChange={(e) => setNovoContratoNomeResponsavel(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                      placeholder="Nome"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">
-                      Email do cliente (opcional)
-                    </label>
-                    <input
-                      type="email"
-                      value={novoContratoEmail}
-                      onChange={(e) => setNovoContratoEmail(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                      placeholder="email@cliente.com.br"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">
-                      WhatsApp (opcional)
-                    </label>
-                    <input
-                      value={novoContratoWhatsapp}
-                      onChange={(e) => setNovoContratoWhatsapp(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                      placeholder="11999999999"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
-                  Contrato
-                </div>
-                <div className="space-y-3">
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Valor mensal (R$)</label>
-                    <input
-                      value={novoContratoValor}
-                      onChange={(e) => setNovoContratoValor(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                      placeholder="1500,00"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Dia de vencimento</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={31}
-                      value={novoContratoDia}
-                      onChange={(e) => setNovoContratoDia(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                      placeholder="10"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Data de início</label>
-                    <input
-                      type="date"
-                      value={novoContratoInicio}
-                      onChange={(e) => setNovoContratoInicio(e.target.value)}
-                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Tipo de serviço</label>
-                    <select
-                      value={novoContratoTipoServico}
-                      onChange={(e) => setNovoContratoTipoServico(e.target.value)}
-                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                    >
-                      <option value="">Selecione...</option>
-                      <option value="Contabilidade">Contabilidade</option>
-                      <option value="Folha de pagamento">Folha de pagamento</option>
-                      <option value="Fiscal">Fiscal</option>
-                      <option value="Consultoria">Consultoria</option>
-                      <option value="Completo">Completo</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Regime tributário</label>
-                    <select
-                      value={novoContratoRegime}
-                      onChange={(e) => setNovoContratoRegime(e.target.value)}
-                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                    >
-                      <option value="">Selecione...</option>
-                      <option value="MEI">MEI</option>
-                      <option value="Simples Nacional">Simples Nacional</option>
-                      <option value="Lucro Presumido">Lucro Presumido</option>
-                      <option value="Lucro Real">Lucro Real</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-white/50 mb-1">Forma de pagamento</label>
-                    <select
-                      value={novoContratoFormaPagamento}
-                      onChange={(e) => setNovoContratoFormaPagamento(e.target.value)}
-                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                    >
-                      <option value="">Selecione...</option>
-                      <option value="PIX">PIX</option>
-                      <option value="Boleto">Boleto</option>
-                      <option value="Transferência">Transferência</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
+              <div className="col-span-2 mt-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
                   Observações
                 </div>
                 <textarea
                   rows={3}
-                  value={novoContratoObservacoes}
-                  onChange={(e) => setNovoContratoObservacoes(e.target.value)}
+                  value={novoClienteObservacoes}
+                  onChange={(e) => setNovoClienteObservacoes(e.target.value)}
                   className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
                   placeholder="Informações adicionais sobre o contrato..."
                 />
@@ -1831,18 +1783,18 @@ export default function DashboardClient(props: {
             <div className="mt-6 flex gap-2 justify-end">
               <button
                 type="button"
-                onClick={fecharModalContrato}
+                onClick={fecharModalNovoCliente}
                 className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
               >
                 Cancelar
               </button>
               <button
                 type="button"
-                disabled={salvandoContrato}
-                onClick={() => void salvarNovoContrato()}
+                disabled={salvandoCliente}
+                onClick={() => void salvarNovoCliente()}
                 className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
               >
-                {salvandoContrato ? "Salvando..." : "Salvar"}
+                {salvandoCliente ? "Salvando..." : "Salvar cliente"}
               </button>
             </div>
           </div>
@@ -2247,7 +2199,7 @@ export default function DashboardClient(props: {
           {podeGerirEscritorio ? (
             <button
               type="button"
-              onClick={() => setModalEmpresa(true)}
+              onClick={abrirModalNovoCliente}
               className="h-7 w-7 shrink-0 rounded-lg border border-[#1D9E75]/30 text-[#5DCAA5] text-lg leading-none hover:bg-[#1D9E75]/10"
               aria-label="Adicionar empresa"
             >
@@ -2669,19 +2621,11 @@ export default function DashboardClient(props: {
                 <button
                   type="button"
                   onClick={() => {
-                    setNovoContratoEmpresaId(props.empresas[0]?.id ?? "");
-                    setNovoContratoNomeResponsavel("");
-                    setNovoContratoEmail("");
-                    setNovoContratoWhatsapp("");
-                    setNovoContratoTipoServico("");
-                    setNovoContratoRegime("");
-                    setNovoContratoFormaPagamento("");
-                    setNovoContratoObservacoes("");
-                    setModalContrato(true);
+                    abrirModalNovoCliente();
                   }}
                   className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110"
                 >
-                  Novo contrato
+                  Novo cliente
                 </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden overflow-x-auto">
