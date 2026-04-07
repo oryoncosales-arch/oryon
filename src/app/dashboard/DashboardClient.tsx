@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { PDFDocument } from "pdf-lib";
 import { createClient } from "@/lib/supabase/client";
 
 type TabKey = "upload" | "diagnostico" | "chat" | "acoes";
@@ -102,6 +103,46 @@ function formatDatePtBR(iso: string) {
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+const PDF_CHUNK_PAGES = 3;
+
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const chunk = 0x8000;
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const sub = bytes.subarray(i, i + chunk);
+    binary += String.fromCharCode.apply(
+      null,
+      sub as unknown as number[],
+    );
+  }
+  return btoa(binary);
+}
+
+function consolidarResultadosClassificador(
+  partes: { transacoes: Transacao[]; resumo: Resumo }[],
+): { transacoes: Transacao[]; resumo: Resumo } {
+  const transacoes = partes.flatMap((p) => p.transacoes);
+  const totalEntradas = transacoes
+    .filter((t) => t.tipo === "entrada")
+    .reduce((acc, t) => acc + t.valor, 0);
+  const totalSaidas = transacoes
+    .filter((t) => t.tipo === "saida")
+    .reduce((acc, t) => acc + t.valor, 0);
+  const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
+    acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
+    return acc;
+  }, {});
+  return {
+    transacoes,
+    resumo: {
+      totalEntradas,
+      totalSaidas,
+      saldo: totalEntradas - totalSaidas,
+      porCategoria,
+    },
+  };
 }
 
 function daysInMonth(year: number, month: number) {
@@ -465,6 +506,7 @@ export default function DashboardClient(props: {
   const [chatLoading, setChatLoading] = useState(false);
 
   const [uploadLoading, setUploadLoading] = useState(false);
+  const [uploadStatusMessage, setUploadStatusMessage] = useState("");
   const [salvarLoading, setSalvarLoading] = useState(false);
   const [acoesLoading, setAcoesLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -748,6 +790,7 @@ export default function DashboardClient(props: {
   async function handleFile(file: File) {
     setErro(null);
     setUploadLoading(true);
+    setUploadStatusMessage("");
     setDiagnostico(null);
     setAcoes(null);
     setMensagens([]);
@@ -769,44 +812,104 @@ export default function DashboardClient(props: {
         file.name.toLowerCase().endsWith(".jpg") ||
         file.name.toLowerCase().endsWith(".jpeg");
 
-      let payload: any;
+      async function classificarPayload(payload: {
+        extrato?: string;
+        arquivo?: string;
+        tipo?: string;
+      }) {
+        const res = await fetch("/api/classificador", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const j = await res.json().catch(() => ({}));
+          throw new Error(j?.erro ?? "Falha ao classificar extrato.");
+        }
+        return (await res.json()) as { transacoes: Transacao[]; resumo: Resumo };
+      }
+
       if (isText) {
         const text = await file.text();
-        payload = { extrato: text };
-      } else if (isPdf || isImage) {
+        setUploadStatusMessage("Classificando com IA...");
+        const data = await classificarPayload({ extrato: text });
+        setTransacoes(data.transacoes);
+        setResumo(data.resumo);
+      } else if (isImage) {
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => {
             const result = reader.result as string;
-            resolve(result.split(",")[1]); // remove prefixo data:...;base64,
+            resolve(result.split(",")[1]);
           };
           reader.onerror = reject;
           reader.readAsDataURL(file);
         });
-        payload = {
+        setUploadStatusMessage("Classificando com IA...");
+        const data = await classificarPayload({
           arquivo: base64,
-          tipo: isPdf ? "application/pdf" : mime || "image/jpeg",
-        };
+          tipo: mime || "image/jpeg",
+        });
+        setTransacoes(data.transacoes);
+        setResumo(data.resumo);
+      } else if (isPdf) {
+        const arrayBuffer = await file.arrayBuffer();
+        const srcDoc = await PDFDocument.load(arrayBuffer, {
+          ignoreEncryption: true,
+        });
+        const pageCount = srcDoc.getPageCount();
+
+        if (pageCount <= PDF_CHUNK_PAGES) {
+          const base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              resolve(result.split(",")[1]);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          setUploadStatusMessage("Classificando com IA...");
+          const data = await classificarPayload({
+            arquivo: base64,
+            tipo: "application/pdf",
+          });
+          setTransacoes(data.transacoes);
+          setResumo(data.resumo);
+        } else {
+          const resultados: { transacoes: Transacao[]; resumo: Resumo }[] = [];
+          for (let start = 0; start < pageCount; start += PDF_CHUNK_PAGES) {
+            const end = Math.min(start + PDF_CHUNK_PAGES, pageCount);
+            const indices = Array.from(
+              { length: end - start },
+              (_, i) => start + i,
+            );
+            setUploadStatusMessage(
+              `Processando página ${start + 1}-${end} de ${pageCount}...`,
+            );
+            const chunkDoc = await PDFDocument.create();
+            const copied = await chunkDoc.copyPages(srcDoc, indices);
+            copied.forEach((p) => chunkDoc.addPage(p));
+            const pdfBytes = await chunkDoc.save();
+            const base64 = uint8ArrayToBase64(pdfBytes);
+            const data = await classificarPayload({
+              arquivo: base64,
+              tipo: "application/pdf",
+            });
+            resultados.push(data);
+          }
+          const merged = consolidarResultadosClassificador(resultados);
+          setTransacoes(merged.transacoes);
+          setResumo(merged.resumo);
+        }
       } else {
         throw new Error("Formato não suportado. Envie PDF, CSV, TXT, PNG ou JPG.");
       }
-
-      const res = await fetch("/api/classificador", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j?.erro ?? "Falha ao classificar extrato.");
-      }
-      const data = (await res.json()) as { transacoes: Transacao[]; resumo: Resumo };
-      setTransacoes(data.transacoes);
-      setResumo(data.resumo);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao processar arquivo.");
     } finally {
       setUploadLoading(false);
+      setUploadStatusMessage("");
     }
   }
 
@@ -1785,7 +1888,9 @@ export default function DashboardClient(props: {
               {uploadLoading ? (
                 <div className="flex items-center gap-3 text-sm text-white/70">
                   <Spinner />
-                  <span>Classificando com IA...</span>
+                  <span>
+                    {uploadStatusMessage || "Classificando com IA..."}
+                  </span>
                 </div>
               ) : null}
 
