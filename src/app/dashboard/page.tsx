@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import DashboardClient from "./DashboardClient";
 
+export const dynamic = "force-dynamic";
+
 type MeuPerfilRow = {
   id: string;
   escritorio_id: string;
