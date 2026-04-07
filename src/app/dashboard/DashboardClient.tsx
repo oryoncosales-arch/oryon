@@ -501,7 +501,6 @@ export default function DashboardClient(props: {
   const [transacoes, setTransacoes] = useState<Transacao[] | null>(null);
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
-  const [diagnosticoStreamText, setDiagnosticoStreamText] = useState("");
   const [acoes, setAcoes] = useState<Acao[] | null>(null);
   const [extratoHash, setExtratoHash] = useState<string | null>(null);
 
@@ -975,7 +974,6 @@ export default function DashboardClient(props: {
 
       setAbaEmpresa("diagnostico");
       setDiagnostico(null);
-      setDiagnosticoStreamText("");
 
       const res = await fetch("/api/analista", {
         method: "POST",
@@ -986,22 +984,8 @@ export default function DashboardClient(props: {
         const j = await res.json().catch(() => ({}));
         throw new Error(j?.error ?? "Falha ao gerar diagnóstico.");
       }
-
-      if (!res.body) throw new Error("Stream não disponível.");
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder("utf-8");
-      let full = "";
-      while (true) {
-        const { value, done } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        full += chunk;
-        setDiagnosticoStreamText(full);
-      }
-
-      const clean = full.replace(/```json|```/g, "").trim();
-      const parsed = JSON.parse(clean) as Diagnostico;
-      setDiagnostico(parsed);
+      const j = (await res.json()) as { sucesso: boolean; data: Diagnostico };
+      setDiagnostico(j.data);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao salvar e analisar.");
     } finally {
@@ -2044,14 +2028,9 @@ export default function DashboardClient(props: {
               </div>
 
               {!diagnostico ? (
-                diagnosticoStreamText ? (
-                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-6">
-                    <div className="text-sm text-white/70 mb-2">
-                      Gerando diagnóstico em tempo real...
-                    </div>
-                    <div className="text-sm leading-6 text-white/90 whitespace-pre-wrap">
-                      {diagnosticoStreamText}
-                    </div>
+                salvarLoading ? (
+                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-8 text-center text-white/70">
+                    Gerando diagnóstico...
                   </div>
                 ) : (
                   <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/60">
