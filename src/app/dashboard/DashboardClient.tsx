@@ -924,35 +924,43 @@ export default function DashboardClient(props: {
     if (!style) {
       style = document.createElement("style");
       style.id = "mais-contabil-tema";
-      style.textContent = `
+      const lightCSS = `
         .light {
-          --bg-main: #F5F5F0;
+          --bg-primary: #F4F4F0;
+          --bg-secondary: #FFFFFF;
           --bg-sidebar: #FFFFFF;
+          --bg-card: #FFFFFF;
+          --text-primary: #111111;
+          --text-secondary: #555555;
+          --text-muted: #888888;
+          --border-color: rgba(0,0,0,0.08);
           color-scheme: light;
         }
-        .light body, .light #dashboard-root {
-          background-color: #F5F5F0 !important;
+        .light body { background: #F4F4F0 !important; color: #111111 !important; }
+        .light aside { background: #FFFFFF !important; border-color: rgba(0,0,0,0.08) !important; }
+        .light main { background: #F4F4F0 !important; }
+        .light [class*="bg-\\[#080808\\]"] { background: #FFFFFF !important; }
+        .light [class*="bg-\\[#0d0d0d\\]"] { background: #F4F4F0 !important; }
+        .light [class*="bg-white\\/5"] { background: rgba(0,0,0,0.04) !important; }
+        .light [class*="bg-white\\/10"] { background: rgba(0,0,0,0.06) !important; }
+        .light [class*="border-white\\/10"] { border-color: rgba(0,0,0,0.08) !important; }
+        .light [class*="border-white\\/5"] { border-color: rgba(0,0,0,0.05) !important; }
+        .light [class*="text-white\\/"] { color: #555555 !important; }
+        .light [class*="text-white"] { color: #111111 !important; }
+        .light [class*="bg-black\\/"] { background: rgba(0,0,0,0.04) !important; }
+        .light [class*="hover\\:bg-white\\/"] { }
+        .light table { color: #111111 !important; }
+        .light tr { border-color: rgba(0,0,0,0.06) !important; }
+        .light input, .light select, .light textarea { 
+          background: #F4F4F0 !important; 
           color: #111111 !important;
+          border-color: rgba(0,0,0,0.12) !important;
         }
-        .light #dashboard-root aside {
-          background-color: #FFFFFF !important;
-          border-color: rgba(0,0,0,0.1) !important;
-        }
-        .light #dashboard-root main {
-          background-color: #F5F5F0 !important;
-        }
-        .light #dashboard-root .text-white { color: #111111 !important; }
-        .light #dashboard-root .text-white\\/90 { color: #111111 !important; }
-        .light #dashboard-root .text-white\\/80 { color: #111111 !important; }
-        .light #dashboard-root .text-white\\/70 { color: #555555 !important; }
-        .light #dashboard-root .text-white\\/60 { color: #555555 !important; }
-        .light #dashboard-root .text-white\\/50 { color: #555555 !important; }
-        .light #dashboard-root .text-white\\/40 { color: #555555 !important; }
-        .light #dashboard-root .text-white\\/30 { color: #555555 !important; }
-        .light #dashboard-root .border-white\\/10 { border-color: rgba(0,0,0,0.1) !important; }
-        .light #dashboard-root .border-white\\/15 { border-color: rgba(0,0,0,0.1) !important; }
-        .light #dashboard-root .bg-white\\/5 { background-color: rgba(0,0,0,0.03) !important; }
+        .light .rounded-2xl { background: #FFFFFF !important; }
+        .light nav button { color: #555555 !important; }
+        .light nav button.active, .light nav button[class*="bg-"] { color: #111111 !important; }
       `;
+      style.textContent = lightCSS;
       document.head.appendChild(style);
     }
   }, [tema]);
