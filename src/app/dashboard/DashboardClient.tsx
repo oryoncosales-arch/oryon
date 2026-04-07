@@ -1014,8 +1014,15 @@ export default function DashboardClient(props: {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          diagnostico,
-          empresa: empresaSelecionada,
+          diagnostico: {
+            saude_financeira: diagnostico.saude_financeira,
+            score: diagnostico.score,
+            resumo: diagnostico.resumo,
+            problemas: diagnostico.problemas?.slice(0, 3),
+            oportunidades: diagnostico.oportunidades?.slice(0, 2),
+            maiores_gastos: diagnostico.maiores_gastos?.slice(0, 3),
+          },
+          empresa: { nome: empresaSelecionada.nome, cnpj: empresaSelecionada.cnpj },
           contato: { nome: empresaSelecionada.nome },
         }),
       });
