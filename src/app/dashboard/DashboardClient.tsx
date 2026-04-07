@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import * as pdfjsLib from "pdfjs-dist";
 import { createClient } from "@/lib/supabase/client";
@@ -89,8 +89,27 @@ type Contrato = {
   created_at?: string;
 };
 
+type Cargo = "socio" | "contador" | "assistente";
+
+type FuncionarioRow = {
+  id: string;
+  escritorio_id: string;
+  user_id: string | null;
+  nome: string;
+  email: string;
+  cargo: Cargo;
+  ativo: boolean;
+  created_at?: string;
+  funcionario_empresas: { empresa_id: string }[] | null;
+};
+
 type Secao = "escritorio" | "empresa";
-type PaginaEscritorio = "visao-geral" | "clientes" | "contratos" | "cobrancas";
+type PaginaEscritorio =
+  | "visao-geral"
+  | "clientes"
+  | "contratos"
+  | "cobrancas"
+  | "funcionarios";
 
 const money = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -107,6 +126,30 @@ function formatDatePtBR(iso: string) {
 
 function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
+}
+
+function cargoBadgeClasses(cargo: Cargo) {
+  switch (cargo) {
+    case "socio":
+      return "bg-[#1D9E75]/15 text-[#5DCAA5] border-[#1D9E75]/25";
+    case "contador":
+      return "bg-blue-500/15 text-blue-300 border-blue-500/25";
+    case "assistente":
+      return "bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/25";
+    default:
+      return "bg-white/5 text-white/70 border-white/10";
+  }
+}
+
+function cargoLabel(c: Cargo) {
+  switch (c) {
+    case "socio":
+      return "Sócio";
+    case "contador":
+      return "Contador";
+    case "assistente":
+      return "Assistente";
+  }
 }
 
 async function extrairTextoPdf(file: File): Promise<string> {
@@ -464,7 +507,11 @@ export default function DashboardClient(props: {
   user: AuthedUser;
   escritorio: Escritorio;
   empresas: Empresa[];
+  empresasEscritorio: Empresa[];
   contratos: Contrato[];
+  funcionarios: FuncionarioRow[];
+  isOwner: boolean;
+  initialMeuPerfil: FuncionarioRow | null;
 }) {
   const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
@@ -517,6 +564,25 @@ export default function DashboardClient(props: {
   const [salvarLoading, setSalvarLoading] = useState(false);
   const [acoesLoading, setAcoesLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  const [meuPerfil, setMeuPerfil] = useState<FuncionarioRow | null>(
+    props.initialMeuPerfil,
+  );
+
+  const [modalFuncionario, setModalFuncionario] = useState(false);
+  const [novoFuncNome, setNovoFuncNome] = useState("");
+  const [novoFuncEmail, setNovoFuncEmail] = useState("");
+  const [novoFuncCargo, setNovoFuncCargo] = useState<Cargo>("assistente");
+  const [novoFuncEmpresaIds, setNovoFuncEmpresaIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [salvandoFuncionario, setSalvandoFuncionario] = useState(false);
+
+  const [designacaoFunc, setDesignacaoFunc] = useState<FuncionarioRow | null>(null);
+  const [designacaoEmpresaIds, setDesignacaoEmpresaIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [salvandoDesignacao, setSalvandoDesignacao] = useState(false);
 
   const empresaNomePorId = useMemo(() => {
     const m = new Map<string, string>();
@@ -656,6 +722,45 @@ export default function DashboardClient(props: {
     [],
   );
 
+  const podeVerEscritorio = props.isOwner || meuPerfil?.cargo === "socio";
+  const podeGerirEscritorio = props.isOwner || meuPerfil?.cargo === "socio";
+  const eAssistente = meuPerfil?.cargo === "assistente";
+
+  useEffect(() => {
+    setMeuPerfil(props.initialMeuPerfil);
+  }, [props.initialMeuPerfil]);
+
+  useEffect(() => {
+    if (props.isOwner) return;
+    let cancelled = false;
+    (async () => {
+      const { data } = await supabase
+        .from("funcionarios")
+        .select("*, funcionario_empresas(empresa_id)")
+        .eq("user_id", props.user.id)
+        .eq("ativo", true)
+        .maybeSingle();
+      if (!cancelled) setMeuPerfil(data as FuncionarioRow | null);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [props.isOwner, props.user.id, supabase]);
+
+  useEffect(() => {
+    if (!podeVerEscritorio && secao === "escritorio") {
+      setSecao("empresa");
+      const first = props.empresas[0]?.id;
+      if (first) setEmpresaSelecionadaId(first);
+    }
+  }, [podeVerEscritorio, secao, props.empresas]);
+
+  useEffect(() => {
+    if (eAssistente && abaEmpresa === "upload") {
+      setAbaEmpresa("diagnostico");
+    }
+  }, [eAssistente, abaEmpresa]);
+
   useEffect(() => {
     setTransacoes(null);
     setResumo(null);
@@ -702,6 +807,10 @@ export default function DashboardClient(props: {
 
   async function salvarNovaEmpresa() {
     setErro(null);
+    if (!podeGerirEscritorio) {
+      setErro("Sem permissão para criar empresa.");
+      return;
+    }
     const nome = novaEmpresaNome.trim();
     if (!nome) {
       setErro("Nome da empresa é obrigatório.");
@@ -952,6 +1061,10 @@ export default function DashboardClient(props: {
 
   async function salvarEAnalisar() {
     setErro(null);
+    if (eAssistente) {
+      setErro("Sem permissão para salvar e analisar.");
+      return;
+    }
     if (!empresaSelecionada) {
       setErro("Selecione uma empresa.");
       return;
@@ -1040,6 +1153,117 @@ export default function DashboardClient(props: {
     }
   }
 
+  function abrirModalNovoFuncionario() {
+    setNovoFuncNome("");
+    setNovoFuncEmail("");
+    setNovoFuncCargo("assistente");
+    setNovoFuncEmpresaIds(new Set());
+    setModalFuncionario(true);
+  }
+
+  function toggleNovoFuncEmpresa(empresaId: string) {
+    setNovoFuncEmpresaIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(empresaId)) n.delete(empresaId);
+      else n.add(empresaId);
+      return n;
+    });
+  }
+
+  function abrirPainelDesignacao(f: FuncionarioRow) {
+    setDesignacaoFunc(f);
+    setDesignacaoEmpresaIds(
+      new Set((f.funcionario_empresas ?? []).map((x) => x.empresa_id)),
+    );
+  }
+
+  function toggleDesignacaoEmpresa(empresaId: string) {
+    setDesignacaoEmpresaIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(empresaId)) n.delete(empresaId);
+      else n.add(empresaId);
+      return n;
+    });
+  }
+
+  async function salvarNovoFuncionario() {
+    setErro(null);
+    const nome = novoFuncNome.trim();
+    const email = novoFuncEmail.trim().toLowerCase();
+    if (!nome || !email) {
+      setErro("Preencha nome e e-mail do funcionário.");
+      return;
+    }
+    setSalvandoFuncionario(true);
+    try {
+      const res = await fetch("/api/funcionarios", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          nome,
+          email,
+          cargo: novoFuncCargo,
+          escritorioId: props.escritorio.id,
+          empresaIds: Array.from(novoFuncEmpresaIds),
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error ?? "Falha ao criar funcionário.");
+      }
+      setModalFuncionario(false);
+      router.refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao criar funcionário.");
+    } finally {
+      setSalvandoFuncionario(false);
+    }
+  }
+
+  async function salvarDesignacaoEmpresas() {
+    if (!designacaoFunc) return;
+    setErro(null);
+    setSalvandoDesignacao(true);
+    try {
+      const res = await fetch("/api/funcionarios/designacao", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          funcionarioId: designacaoFunc.id,
+          empresaIds: Array.from(designacaoEmpresaIds),
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error ?? "Falha ao salvar designações.");
+      }
+      setDesignacaoFunc(null);
+      router.refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao salvar designações.");
+    } finally {
+      setSalvandoDesignacao(false);
+    }
+  }
+
+  async function desativarFuncionario(id: string) {
+    setErro(null);
+    try {
+      const res = await fetch("/api/funcionarios/desativar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ funcionarioId: id }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error ?? "Falha ao desativar.");
+      }
+      router.refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao desativar.");
+    }
+  }
+
   async function enviarChat() {
     setErro(null);
     if (!transacoes || !resumo || !empresaSelecionada) {
@@ -1100,16 +1324,33 @@ export default function DashboardClient(props: {
     [],
   );
 
-  const menuEscritorio = useMemo(
-    () =>
-      [
-        { key: "visao-geral" as const, label: "Visão geral", icon: <GridIcon /> },
-        { key: "clientes" as const, label: "Clientes", icon: <PeopleIcon /> },
-        { key: "contratos" as const, label: "Contratos", icon: <DocumentIcon /> },
-        { key: "cobrancas" as const, label: "Cobranças", icon: <DollarIcon /> },
-      ] as const,
-    [],
-  );
+  const empresaTabItemsVisiveis = useMemo(() => {
+    if (eAssistente) {
+      return empresaTabItems.filter((it) => it.key !== "upload");
+    }
+    return empresaTabItems;
+  }, [eAssistente, empresaTabItems]);
+
+  const menuEscritorio = useMemo(() => {
+    const items: Array<{
+      key: PaginaEscritorio;
+      label: string;
+      icon: ReactNode;
+    }> = [
+      { key: "visao-geral", label: "Visão geral", icon: <GridIcon /> },
+      { key: "clientes", label: "Clientes", icon: <PeopleIcon /> },
+      { key: "contratos", label: "Contratos", icon: <DocumentIcon /> },
+      { key: "cobrancas", label: "Cobranças", icon: <DollarIcon /> },
+    ];
+    if (podeGerirEscritorio) {
+      items.push({
+        key: "funcionarios",
+        label: "Funcionários",
+        icon: <PeopleIcon />,
+      });
+    }
+    return items;
+  }, [podeGerirEscritorio]);
 
   return (
     <div className="min-h-screen bg-[#080808] text-white flex">
@@ -1240,6 +1481,139 @@ export default function DashboardClient(props: {
         </div>
       ) : null}
 
+      {modalFuncionario ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Adicionar funcionário</div>
+            <div className="mt-4 space-y-3">
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Nome completo</label>
+                <input
+                  value={novoFuncNome}
+                  onChange={(e) => setNovoFuncNome(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="Nome"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">E-mail</label>
+                <input
+                  type="email"
+                  value={novoFuncEmail}
+                  onChange={(e) => setNovoFuncEmail(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="email@empresa.com.br"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Cargo</label>
+                <select
+                  value={novoFuncCargo}
+                  onChange={(e) => setNovoFuncCargo(e.target.value as Cargo)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="socio">Sócio</option>
+                  <option value="contador">Contador</option>
+                  <option value="assistente">Assistente</option>
+                </select>
+              </div>
+              <div>
+                <div className="text-xs text-white/50 mb-2">Empresas designadas</div>
+                <div className="max-h-40 overflow-y-auto space-y-2 rounded-xl border border-white/10 p-3">
+                  {props.empresasEscritorio.length ? (
+                    props.empresasEscritorio.map((e) => (
+                      <label
+                        key={e.id}
+                        className="flex items-center gap-2 text-sm text-white/80 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={novoFuncEmpresaIds.has(e.id)}
+                          onChange={() => toggleNovoFuncEmpresa(e.id)}
+                          className="rounded border-white/20"
+                        />
+                        <span className="truncate">{e.nome}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <div className="text-xs text-white/40">Nenhuma empresa cadastrada.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setModalFuncionario(false)}
+                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={salvandoFuncionario}
+                onClick={() => void salvarNovoFuncionario()}
+                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
+              >
+                {salvandoFuncionario ? "Salvando..." : "Convidar e salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {designacaoFunc ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Empresas designadas</div>
+            <div className="mt-1 text-sm text-white/50">{designacaoFunc.nome}</div>
+            <div className="mt-4 max-h-48 overflow-y-auto space-y-2 rounded-xl border border-white/10 p-3">
+              {props.empresasEscritorio.map((e) => (
+                <label
+                  key={e.id}
+                  className="flex items-center gap-2 text-sm text-white/80 cursor-pointer"
+                >
+                  <input
+                    type="checkbox"
+                    checked={designacaoEmpresaIds.has(e.id)}
+                    onChange={() => toggleDesignacaoEmpresa(e.id)}
+                    className="rounded border-white/20"
+                  />
+                  <span className="truncate">{e.nome}</span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDesignacaoFunc(null)}
+                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={salvandoDesignacao}
+                onClick={() => void salvarDesignacaoEmpresas()}
+                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
+              >
+                {salvandoDesignacao ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <aside className="w-[220px] shrink-0 border-r border-[#1D9E75]/15 bg-[#080808] flex flex-col min-h-screen">
         <div className="px-5 pt-6">
           <div className="text-lg font-semibold tracking-[0.18em] text-[#1D9E75]">
@@ -1248,47 +1622,55 @@ export default function DashboardClient(props: {
           <div className="mt-2 text-xs text-white/50 truncate">{props.escritorio.nome}</div>
         </div>
 
-        <div className="mt-5 px-5">
-          <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
-            Meu escritório
-          </div>
-        </div>
-        <nav className="mt-2 px-3 space-y-1">
-          {menuEscritorio.map((it) => {
-            const active = secao === "escritorio" && paginaEscritorio === it.key;
-            return (
-              <button
-                key={it.key}
-                type="button"
-                onClick={() => irEscritorio(it.key)}
-                className={clsx(
-                  "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
-                  active
-                    ? "bg-[#1D9E75]/10 text-white border-l-2 border-[#1D9E75]"
-                    : "text-white/40 hover:text-white/70 hover:bg-white/5",
-                )}
-              >
-                <span className={clsx(active ? "text-white" : "text-white/60")}>{it.icon}</span>
-                <span className="truncate text-left">{it.label}</span>
-              </button>
-            );
-          })}
-        </nav>
+        {podeVerEscritorio ? (
+          <>
+            <div className="mt-5 px-5">
+              <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
+                Meu escritório
+              </div>
+            </div>
+            <nav className="mt-2 px-3 space-y-1">
+              {menuEscritorio.map((it) => {
+                const active = secao === "escritorio" && paginaEscritorio === it.key;
+                return (
+                  <button
+                    key={it.key}
+                    type="button"
+                    onClick={() => irEscritorio(it.key)}
+                    className={clsx(
+                      "w-full flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors",
+                      active
+                        ? "bg-[#1D9E75]/10 text-white border-l-2 border-[#1D9E75]"
+                        : "text-white/40 hover:text-white/70 hover:bg-white/5",
+                    )}
+                  >
+                    <span className={clsx(active ? "text-white" : "text-white/60")}>
+                      {it.icon}
+                    </span>
+                    <span className="truncate text-left">{it.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
 
-        <div className="my-4 mx-5 h-px bg-[#1D9E75]/10" />
+            <div className="my-4 mx-5 h-px bg-[#1D9E75]/10" />
+          </>
+        ) : null}
 
         <div className="px-5 flex items-center justify-between gap-2">
           <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium">
             Empresas
           </div>
-          <button
-            type="button"
-            onClick={() => setModalEmpresa(true)}
-            className="h-7 w-7 shrink-0 rounded-lg border border-[#1D9E75]/30 text-[#5DCAA5] text-lg leading-none hover:bg-[#1D9E75]/10"
-            aria-label="Adicionar empresa"
-          >
-            +
-          </button>
+          {podeGerirEscritorio ? (
+            <button
+              type="button"
+              onClick={() => setModalEmpresa(true)}
+              className="h-7 w-7 shrink-0 rounded-lg border border-[#1D9E75]/30 text-[#5DCAA5] text-lg leading-none hover:bg-[#1D9E75]/10"
+              aria-label="Adicionar empresa"
+            >
+              +
+            </button>
+          ) : null}
         </div>
         <div className="mt-2 px-3 space-y-1 max-h-[40vh] overflow-y-auto">
           {props.empresas.map((e) => {
@@ -1837,6 +2219,102 @@ export default function DashboardClient(props: {
             </section>
           ) : null}
 
+          {secao === "escritorio" && paginaEscritorio === "funcionarios" && podeGerirEscritorio ? (
+            <section className="space-y-6">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h1 className="text-2xl font-semibold">Funcionários</h1>
+                  <p className="mt-1 text-sm text-white/50">Equipe do escritório</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={abrirModalNovoFuncionario}
+                  className="rounded-xl bg-[#1D9E75] px-5 py-2.5 text-sm font-semibold text-black hover:brightness-110 shrink-0"
+                >
+                  Adicionar funcionário
+                </button>
+              </div>
+
+              {!props.funcionarios.length ? (
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-10 text-center text-white/50 text-sm">
+                  Nenhum funcionário cadastrado. Adicione o primeiro membro da equipe.
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden overflow-x-auto">
+                  <table className="w-full text-sm min-w-[720px]">
+                    <thead>
+                      <tr className="border-b border-white/10 text-left text-xs text-white/50 uppercase tracking-wide">
+                        <th className="px-4 py-3 font-medium">Nome</th>
+                        <th className="px-4 py-3 font-medium">Email</th>
+                        <th className="px-4 py-3 font-medium">Cargo</th>
+                        <th className="px-4 py-3 font-medium">Empresas designadas</th>
+                        <th className="px-4 py-3 font-medium">Status</th>
+                        <th className="px-4 py-3 font-medium text-right">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/10">
+                      {props.funcionarios.map((f) => {
+                        const nEmp =
+                          f.funcionario_empresas?.filter(Boolean).length ?? 0;
+                        return (
+                          <tr key={f.id} className="text-white/90">
+                            <td className="px-4 py-3 font-medium">{f.nome}</td>
+                            <td className="px-4 py-3 text-white/70">{f.email}</td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={clsx(
+                                  "inline-flex rounded-full border px-2 py-1 text-xs font-semibold",
+                                  cargoBadgeClasses(f.cargo),
+                                )}
+                              >
+                                {cargoLabel(f.cargo)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3">
+                              <button
+                                type="button"
+                                onClick={() => abrirPainelDesignacao(f)}
+                                className="text-[#5DCAA5] hover:underline text-left"
+                              >
+                                {nEmp === 1
+                                  ? "1 empresa"
+                                  : `${nEmp} empresas`}
+                              </button>
+                            </td>
+                            <td className="px-4 py-3">
+                              {f.ativo ? (
+                                <span className="inline-flex rounded-full border border-[#1D9E75]/30 bg-[#1D9E75]/10 px-2 py-1 text-xs text-[#5DCAA5]">
+                                  Ativo
+                                </span>
+                              ) : (
+                                <span className="inline-flex rounded-full border border-white/15 bg-white/5 px-2 py-1 text-xs text-white/50">
+                                  Inativo
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-right">
+                              {f.ativo ? (
+                                <button
+                                  type="button"
+                                  onClick={() => void desativarFuncionario(f.id)}
+                                  className="rounded-lg border border-red-500/25 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                                >
+                                  Desativar
+                                </button>
+                              ) : (
+                                <span className="text-white/30 text-xs">—</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          ) : null}
+
           {secao === "empresa" && !empresaSelecionada ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/60">
               Selecione uma empresa na barra lateral.
@@ -1851,7 +2329,7 @@ export default function DashboardClient(props: {
                   <p className="mt-1 text-sm text-white/50">Painel da empresa</p>
                 </div>
                 <div className="flex flex-wrap gap-1 rounded-xl border border-white/10 bg-white/5 p-1">
-                  {empresaTabItems.map((it) => {
+                  {empresaTabItemsVisiveis.map((it) => {
                     const active = abaEmpresa === it.key;
                     return (
                       <button
@@ -2063,14 +2541,16 @@ export default function DashboardClient(props: {
                   </div>
 
                   <div className="flex items-center justify-end">
-                    <button
-                      onClick={salvarEAnalisar}
-                      disabled={salvarLoading}
-                      className="rounded-xl bg-[#1D9E75] px-5 py-3 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2"
-                    >
-                      {salvarLoading ? <Spinner /> : null}
-                      Salvar e analisar
-                    </button>
+                    {!eAssistente ? (
+                      <button
+                        onClick={salvarEAnalisar}
+                        disabled={salvarLoading}
+                        className="rounded-xl bg-[#1D9E75] px-5 py-3 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60 inline-flex items-center gap-2"
+                      >
+                        {salvarLoading ? <Spinner /> : null}
+                        Salvar e analisar
+                      </button>
+                    ) : null}
                   </div>
                 </div>
               ) : null}

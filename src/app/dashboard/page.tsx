@@ -2,6 +2,17 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import DashboardClient from "./DashboardClient";
 
+type MeuPerfilRow = {
+  id: string;
+  escritorio_id: string;
+  user_id: string | null;
+  nome: string;
+  email: string;
+  cargo: "socio" | "contador" | "assistente";
+  ativo: boolean;
+  funcionario_empresas: { empresa_id: string }[] | null;
+};
+
 export default async function DashboardPage() {
   const supabase = await createClient();
   const {
@@ -10,38 +21,85 @@ export default async function DashboardPage() {
 
   if (!user) redirect("/login");
 
-  const { data: escritorio } = await supabase
+  const { data: escritorioDono } = await supabase
     .from("escritorios")
     .select("*")
     .eq("user_id", user.id)
     .limit(1)
     .maybeSingle();
 
-  if (!escritorio) redirect("/onboarding");
+  const isOwner = !!escritorioDono;
+  let escritorio = escritorioDono;
+  let meuPerfilFuncionario: MeuPerfilRow | null = null;
 
-  const { data: empresas } = await supabase
+  if (!escritorio) {
+    const { data: perfil } = await supabase
+      .from("funcionarios")
+      .select("*, funcionario_empresas(empresa_id)")
+      .eq("user_id", user.id)
+      .eq("ativo", true)
+      .maybeSingle();
+
+    if (!perfil) redirect("/onboarding");
+
+    const { data: escRow, error: escErr } = await supabase
+      .from("escritorios")
+      .select("*")
+      .eq("id", perfil.escritorio_id)
+      .single();
+
+    if (escErr || !escRow) redirect("/onboarding");
+
+    escritorio = escRow;
+    meuPerfilFuncionario = perfil as MeuPerfilRow;
+  }
+
+  const { data: empresasTodasRaw } = await supabase
     .from("empresas")
     .select("*")
     .eq("escritorio_id", escritorio.id)
     .order("created_at", { ascending: true });
 
-  const empresaIds = (empresas ?? []).map((e) => e.id);
+  const empresasTodas = empresasTodasRaw ?? [];
+
+  let empresas = empresasTodas;
+  if (!isOwner && meuPerfilFuncionario && meuPerfilFuncionario.cargo !== "socio") {
+    const allowed = new Set(
+      (meuPerfilFuncionario.funcionario_empresas ?? []).map((x) => x.empresa_id),
+    );
+    empresas = empresasTodas.filter((e) => allowed.has(e.id));
+  }
+
+  const empresaIdsForContratos =
+    isOwner || meuPerfilFuncionario?.cargo === "socio"
+      ? empresasTodas.map((e) => e.id)
+      : empresas.map((e) => e.id);
 
   const { data: contratos } =
-    empresaIds.length > 0
+    empresaIdsForContratos.length > 0
       ? await supabase
           .from("contratos")
           .select("*")
-          .in("empresa_id", empresaIds)
+          .in("empresa_id", empresaIdsForContratos)
           .order("created_at", { ascending: false })
       : { data: [] as never[] };
 
+  const { data: funcionarios } = await supabase
+    .from("funcionarios")
+    .select("*, funcionario_empresas(empresa_id)")
+    .eq("escritorio_id", escritorio.id)
+    .order("created_at", { ascending: true });
+
   return (
     <DashboardClient
-      user={user}
+      user={{ id: user.id, email: user.email ?? undefined }}
       escritorio={escritorio}
-      empresas={empresas ?? []}
+      empresas={empresas}
+      empresasEscritorio={empresasTodas}
       contratos={contratos ?? []}
+      funcionarios={funcionarios ?? []}
+      isOwner={isOwner}
+      initialMeuPerfil={meuPerfilFuncionario}
     />
   );
 }
