@@ -607,8 +607,21 @@ export default function DashboardClient(props: {
   const [novoClienteObservacoes, setNovoClienteObservacoes] = useState("");
   const [salvandoCliente, setSalvandoCliente] = useState(false);
 
-  const [editingContratoId, setEditingContratoId] = useState<string | null>(null);
   const [avisosEnviados, setAvisosEnviados] = useState<Record<string, boolean>>({});
+
+  const [contratoEditando, setContratoEditando] = useState<Contrato | null>(null);
+  const [editNomeResponsavel, setEditNomeResponsavel] = useState("");
+  const [editEmail, setEditEmail] = useState("");
+  const [editWhatsapp, setEditWhatsapp] = useState("");
+  const [editValor, setEditValor] = useState("");
+  const [editDia, setEditDia] = useState("");
+  const [editInicio, setEditInicio] = useState("");
+  const [editStatus, setEditStatus] = useState<ContratoStatus>("ativo");
+  const [editTipoServico, setEditTipoServico] = useState("");
+  const [editRegime, setEditRegime] = useState("");
+  const [editFormaPagamento, setEditFormaPagamento] = useState("");
+  const [editObservacoes, setEditObservacoes] = useState("");
+  const [salvandoEdicaoContrato, setSalvandoEdicaoContrato] = useState(false);
 
   const [modalCobranca, setModalCobranca] = useState<{
     contratoId: string;
@@ -1014,15 +1027,83 @@ export default function DashboardClient(props: {
     }
   }
 
-  async function atualizarStatusContrato(id: string, status: ContratoStatus) {
+  function abrirEdicaoContrato(c: Contrato) {
+    setContratoEditando(c);
+    setEditNomeResponsavel(c.nome_responsavel ?? "");
+    setEditEmail(c.email_cliente ?? "");
+    setEditWhatsapp(c.whatsapp ?? "");
+    setEditValor(String(c.valor_mensal ?? "").replace(".", ","));
+    setEditDia(String(c.dia_vencimento ?? ""));
+    setEditInicio(c.data_inicio ?? "");
+    setEditStatus(c.status ?? "ativo");
+    setEditTipoServico(c.tipo_servico ?? "");
+    setEditRegime(c.regime_tributario ?? "");
+    setEditFormaPagamento(c.forma_pagamento ?? "");
+    setEditObservacoes(c.observacoes ?? "");
+  }
+
+  function fecharEdicaoContrato() {
+    setContratoEditando(null);
+    setEditNomeResponsavel("");
+    setEditEmail("");
+    setEditWhatsapp("");
+    setEditValor("");
+    setEditDia("");
+    setEditInicio("");
+    setEditStatus("ativo");
+    setEditTipoServico("");
+    setEditRegime("");
+    setEditFormaPagamento("");
+    setEditObservacoes("");
+  }
+
+  async function salvarEdicaoContrato() {
+    if (!contratoEditando) return;
     setErro(null);
-    const { error } = await supabase.from("contratos").update({ status }).eq("id", id);
-    if (error) {
-      setErro(error.message);
+
+    const valor = Number(String(editValor).replace(",", "."));
+    const dia = parseInt(editDia, 10);
+
+    if (!Number.isFinite(valor) || valor <= 0) {
+      setErro("Valor mensal inválido.");
       return;
     }
-    setEditingContratoId(null);
-    router.refresh();
+    if (!Number.isFinite(dia) || dia < 1 || dia > 31) {
+      setErro("Dia de vencimento deve ser entre 1 e 31.");
+      return;
+    }
+    if (!editInicio) {
+      setErro("Informe a data de início.");
+      return;
+    }
+
+    setSalvandoEdicaoContrato(true);
+    try {
+      const { error } = await supabase
+        .from("contratos")
+        .update({
+          nome_responsavel: editNomeResponsavel.trim() || null,
+          email_cliente: editEmail.trim() || null,
+          whatsapp: editWhatsapp.trim() || null,
+          valor_mensal: valor,
+          dia_vencimento: dia,
+          data_inicio: editInicio,
+          forma_pagamento: editFormaPagamento || null,
+          status: editStatus,
+          tipo_servico: editTipoServico || null,
+          regime_tributario: editRegime || null,
+          observacoes: editObservacoes.trim() || null,
+        })
+        .eq("id", contratoEditando.id);
+
+      if (error) throw new Error(error.message);
+      fecharEdicaoContrato();
+      router.refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao salvar contrato.");
+    } finally {
+      setSalvandoEdicaoContrato(false);
+    }
   }
 
   async function enviarEmailCobranca() {
@@ -2004,6 +2085,192 @@ export default function DashboardClient(props: {
         </div>
       ) : null}
 
+      {contratoEditando ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Editar contrato</div>
+            <div className="mt-1 text-xs text-white/40">
+              {empresaNomePorId.get(contratoEditando.empresa_id) ?? "—"}
+            </div>
+
+            <div className="mt-5 grid grid-cols-2 gap-4">
+              <div className="col-span-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
+                  Dados do responsável
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Nome do responsável</label>
+                  <input
+                    value={editNomeResponsavel}
+                    onChange={(e) => setEditNomeResponsavel(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">WhatsApp</label>
+                  <input
+                    value={editWhatsapp}
+                    onChange={(e) => setEditWhatsapp(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    placeholder="11999999999"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-white/50 mb-1">Email do cliente</label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="email@cliente.com.br"
+                />
+              </div>
+
+              <div className="col-span-2 mt-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
+                  Dados do contrato
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Valor mensal</label>
+                  <input
+                    value={editValor}
+                    onChange={(e) => setEditValor(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    placeholder="1500,00"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Dia de vencimento</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={editDia}
+                    onChange={(e) => setEditDia(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    placeholder="10"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Data de início</label>
+                  <input
+                    type="date"
+                    value={editInicio}
+                    onChange={(e) => setEditInicio(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Forma de pagamento</label>
+                  <select
+                    value={editFormaPagamento}
+                    onChange={(e) => setEditFormaPagamento(e.target.value)}
+                    className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  >
+                    <option value="">Selecione...</option>
+                    <option value="PIX">PIX</option>
+                    <option value="Boleto">Boleto</option>
+                    <option value="Transferência">Transferência</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Status</label>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as ContratoStatus)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="ativo">Ativo</option>
+                  <option value="inadimplente">Inadimplente</option>
+                  <option value="cancelado">Cancelado</option>
+                </select>
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Tipo de serviço</label>
+                <select
+                  value={editTipoServico}
+                  onChange={(e) => setEditTipoServico(e.target.value)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="Contabilidade">Contabilidade</option>
+                  <option value="Folha">Folha</option>
+                  <option value="Fiscal">Fiscal</option>
+                  <option value="Consultoria">Consultoria</option>
+                  <option value="Completo">Completo</option>
+                </select>
+              </div>
+
+              <div className="col-span-2">
+                <label className="block text-xs text-white/50 mb-1">Regime tributário</label>
+                <select
+                  value={editRegime}
+                  onChange={(e) => setEditRegime(e.target.value)}
+                  className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                >
+                  <option value="">Selecione...</option>
+                  <option value="MEI">MEI</option>
+                  <option value="Simples Nacional">Simples Nacional</option>
+                  <option value="Lucro Presumido">Lucro Presumido</option>
+                  <option value="Lucro Real">Lucro Real</option>
+                </select>
+              </div>
+
+              <div className="col-span-2 mt-2">
+                <div className="text-[10px] uppercase tracking-wider text-[#5DCAA5] font-semibold mb-2">
+                  Observações
+                </div>
+                <textarea
+                  rows={3}
+                  value={editObservacoes}
+                  onChange={(e) => setEditObservacoes(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="Observações..."
+                />
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                disabled={salvandoEdicaoContrato}
+                onClick={fecharEdicaoContrato}
+                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={salvandoEdicaoContrato}
+                onClick={() => void salvarEdicaoContrato()}
+                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
+              >
+                {salvandoEdicaoContrato ? "Salvando..." : "Salvar alterações"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {funcionarioEditando ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -2677,32 +2944,14 @@ export default function DashboardClient(props: {
                         </td>
                         <td className="px-4 py-3">{c.dia_vencimento}</td>
                         <td className="px-4 py-3">
-                          {editingContratoId === c.id ? (
-                            <select
-                              value={c.status}
-                              onChange={(e) =>
-                                void atualizarStatusContrato(
-                                  c.id,
-                                  e.target.value as ContratoStatus,
-                                )
-                              }
-                              className="rounded-lg bg-[#080808] border border-[#1D9E75]/30 px-2 py-1 text-xs outline-none"
-                              autoFocus
-                            >
-                              <option value="ativo">ativo</option>
-                              <option value="inadimplente">inadimplente</option>
-                              <option value="cancelado">cancelado</option>
-                            </select>
-                          ) : (
-                            <span
-                              className={clsx(
-                                "inline-flex rounded-full border px-2 py-0.5 text-xs",
-                                statusBadgeClass(c.status),
-                              )}
-                            >
-                              {c.status}
-                            </span>
-                          )}
+                          <span
+                            className={clsx(
+                              "inline-flex rounded-full border px-2 py-0.5 text-xs",
+                              statusBadgeClass(c.status),
+                            )}
+                          >
+                            {c.status}
+                          </span>
                         </td>
                         <td className="px-4 py-3 text-white/60 whitespace-nowrap">
                           {formatDatePtBR(c.data_inicio)}
@@ -2710,14 +2959,10 @@ export default function DashboardClient(props: {
                         <td className="px-4 py-3">
                           <button
                             type="button"
-                            onClick={() =>
-                              setEditingContratoId(
-                                editingContratoId === c.id ? null : c.id,
-                              )
-                            }
+                            onClick={() => abrirEdicaoContrato(c)}
                             className="text-xs font-semibold text-[#5DCAA5] hover:underline"
                           >
-                            Editar status
+                            Editar
                           </button>
                         </td>
                       </tr>
