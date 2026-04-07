@@ -123,6 +123,31 @@ async function extrairTextoPdf(file: File): Promise<string> {
   return chunks.join("\n");
 }
 
+function consolidarResultadosClassificador(
+  partes: { transacoes: Transacao[]; resumo: Resumo }[],
+): { transacoes: Transacao[]; resumo: Resumo } {
+  const transacoes = partes.flatMap((p) => p.transacoes);
+  const totalEntradas = transacoes
+    .filter((t) => t.tipo === "entrada")
+    .reduce((acc, t) => acc + t.valor, 0);
+  const totalSaidas = transacoes
+    .filter((t) => t.tipo === "saida")
+    .reduce((acc, t) => acc + t.valor, 0);
+  const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
+    acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
+    return acc;
+  }, {});
+  return {
+    transacoes,
+    resumo: {
+      totalEntradas,
+      totalSaidas,
+      saldo: totalEntradas - totalSaidas,
+      porCategoria,
+    },
+  };
+}
+
 function daysInMonth(year: number, month: number) {
   return new Date(year, month + 1, 0).getDate();
 }
@@ -476,7 +501,9 @@ export default function DashboardClient(props: {
   const [transacoes, setTransacoes] = useState<Transacao[] | null>(null);
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
+  const [diagnosticoStreamText, setDiagnosticoStreamText] = useState("");
   const [acoes, setAcoes] = useState<Acao[] | null>(null);
+  const [extratoHash, setExtratoHash] = useState<string | null>(null);
 
   const [mensagens, setMensagens] = useState<ChatMsg[]>([]);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -772,6 +799,7 @@ export default function DashboardClient(props: {
     setDiagnostico(null);
     setAcoes(null);
     setMensagens([]);
+    setExtratoHash(null);
     try {
       const mime = file.type || "";
       const isText =
@@ -804,7 +832,11 @@ export default function DashboardClient(props: {
           const j = await res.json().catch(() => ({}));
           throw new Error(j?.erro ?? "Falha ao classificar extrato.");
         }
-        return (await res.json()) as { transacoes: Transacao[]; resumo: Resumo };
+        return (await res.json()) as {
+          transacoes: Transacao[];
+          resumo: Resumo;
+          extratoHash?: string | null;
+        };
       }
 
       if (isText) {
@@ -813,6 +845,7 @@ export default function DashboardClient(props: {
         const data = await classificarPayload({ extrato: text });
         setTransacoes(data.transacoes);
         setResumo(data.resumo);
+        setExtratoHash(data.extratoHash ?? null);
       } else if (isImage) {
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -832,16 +865,70 @@ export default function DashboardClient(props: {
         setResumo(data.resumo);
       } else if (isPdf) {
         setUploadStatusMessage("Extraindo texto do PDF...");
-        const texto = await extrairTextoPdf(file);
-        if (!texto.trim()) {
-          throw new Error(
-            "Não foi possível extrair texto deste PDF. Tente outro arquivo ou use imagem/CSV.",
+
+        const dataBytes = new Uint8Array(await file.arrayBuffer());
+        const task = pdfjsLib.getDocument({ data: dataBytes });
+        const pdf = await task.promise;
+        const pageCount = pdf.numPages;
+
+        const extractRange = async (start: number, end: number) => {
+          const pieces: string[] = [];
+          for (let p = start; p <= end; p += 1) {
+            const page = await pdf.getPage(p);
+            const content = await page.getTextContent();
+            const line = content.items
+              .map((item) => ("str" in item ? item.str : ""))
+              .join(" ");
+            pieces.push(line);
+          }
+          return pieces.join("\n");
+        };
+
+        if (pageCount <= 2) {
+          const texto = await extractRange(1, pageCount);
+          if (!texto.trim()) {
+            throw new Error(
+              "Não foi possível extrair texto deste PDF. Tente outro arquivo ou use imagem/CSV.",
+            );
+          }
+          setUploadStatusMessage("Classificando com IA...");
+          const data = await classificarPayload({ extrato: texto });
+          setTransacoes(data.transacoes);
+          setResumo(data.resumo);
+        } else {
+          const chunkSize = 2;
+          const chunks: Array<{ start: number; end: number; idx: number }> = [];
+          for (let start = 1, idx = 0; start <= pageCount; start += chunkSize, idx += 1) {
+            const end = Math.min(pageCount, start + chunkSize - 1);
+            chunks.push({ start, end, idx });
+          }
+
+          const results: Array<{ transacoes: Transacao[]; resumo: Resumo } | null> = Array(
+            chunks.length,
+          ).fill(null);
+
+          let next = 0;
+          const worker = async () => {
+            while (next < chunks.length) {
+              const current = next;
+              next += 1;
+              const ch = chunks[current];
+              setUploadStatusMessage(
+                `Processando página ${ch.start}-${ch.end} de ${pageCount}...`,
+              );
+              const texto = await extractRange(ch.start, ch.end);
+              const data = await classificarPayload({ extrato: texto });
+              results[ch.idx] = { transacoes: data.transacoes, resumo: data.resumo };
+            }
+          };
+
+          await Promise.all([worker(), worker()]);
+          const merged = consolidarResultadosClassificador(
+            results.filter(Boolean) as { transacoes: Transacao[]; resumo: Resumo }[],
           );
+          setTransacoes(merged.transacoes);
+          setResumo(merged.resumo);
         }
-        setUploadStatusMessage("Classificando com IA...");
-        const data = await classificarPayload({ extrato: texto });
-        setTransacoes(data.transacoes);
-        setResumo(data.resumo);
       } else {
         throw new Error("Formato não suportado. Envie PDF, CSV, TXT, PNG ou JPG.");
       }
@@ -880,10 +967,15 @@ export default function DashboardClient(props: {
         valor: t.valor,
         tipo: t.tipo,
         categoria: t.categoria,
+        ...(extratoHash ? { extrato_hash: extratoHash } : {}),
       }));
 
       const { error } = await supabase.from("transacoes").insert(payload as any);
       if (error) throw new Error(error.message);
+
+      setAbaEmpresa("diagnostico");
+      setDiagnostico(null);
+      setDiagnosticoStreamText("");
 
       const res = await fetch("/api/analista", {
         method: "POST",
@@ -894,9 +986,22 @@ export default function DashboardClient(props: {
         const j = await res.json().catch(() => ({}));
         throw new Error(j?.error ?? "Falha ao gerar diagnóstico.");
       }
-      const j = (await res.json()) as { sucesso: boolean; data: Diagnostico };
-      setDiagnostico(j.data);
-      setAbaEmpresa("diagnostico");
+
+      if (!res.body) throw new Error("Stream não disponível.");
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let full = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        full += chunk;
+        setDiagnosticoStreamText(full);
+      }
+
+      const clean = full.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean) as Diagnostico;
+      setDiagnostico(parsed);
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao salvar e analisar.");
     } finally {
@@ -1939,9 +2044,20 @@ export default function DashboardClient(props: {
               </div>
 
               {!diagnostico ? (
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/60">
-                  Importe um extrato para ver o diagnóstico
-                </div>
+                diagnosticoStreamText ? (
+                  <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-6">
+                    <div className="text-sm text-white/70 mb-2">
+                      Gerando diagnóstico em tempo real...
+                    </div>
+                    <div className="text-sm leading-6 text-white/90 whitespace-pre-wrap">
+                      {diagnosticoStreamText}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/60">
+                    Importe um extrato para ver o diagnóstico
+                  </div>
+                )
               ) : (
                 <>
                   <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-6">

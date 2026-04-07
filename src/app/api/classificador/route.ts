@@ -3,27 +3,26 @@ export const maxDuration = 60;
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
+import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 /** PDFs acima disso (bytes decodificados do base64) viram texto via pdf-parse para reduzir payload ao Claude. */
 const PDF_TEXT_EXTRACT_THRESHOLD_BYTES = 3 * 1024 * 1024;
 
-const SYSTEM_PROMPT = `Você é um classificador financeiro especializado em extratos bancários brasileiros.
-Receba as linhas do extrato e retorne APENAS um JSON array válido.
-Cada objeto deve ter exatamente estes campos:
-- data: string no formato YYYY-MM-DD
-- descricao: string com a descrição da transação
-- valor: number positivo
-- tipo: "entrada" ou "saida"
-- categoria: uma das opções: "Receita" | "Despesa Operacional" | "Folha de Pagamento" | "Impostos" | "Fornecedores" | "Aluguel" | "Utilities" | "Taxas Bancárias" | "Transferência" | "Outros"
+const SYSTEM_PROMPT =
+  'Classificador de extratos bancários BR. Retorne APENAS JSON array:\n' +
+  '[{data:YYYY-MM-DD,descricao:string,valor:number,tipo:entrada|saida,categoria:Receita|Despesa Operacional|Folha de Pagamento|Impostos|Fornecedores|Aluguel|Utilities|Taxas Bancárias|Transferência|Outros}]\n' +
+  'Regras: valor sempre positivo, tipo por sinal, sem markdown.';
 
-Regras:
-- Se o valor for negativo no extrato, tipo = "saida" e valor = Math.abs(valor)
-- Se o valor for positivo, tipo = "entrada"
-- Interprete datas em qualquer formato brasileiro e converta para YYYY-MM-DD
-- Se uma linha não for uma transação válida, ignore
-- Retorne APENAS o JSON array, sem markdown, sem explicação, sem texto adicional`;
+function hashExtratoSimples(extrato: string) {
+  const seed = `${extrato.slice(0, 500)}::${extrato.length}`;
+  let h = 0;
+  for (let i = 0; i < seed.length; i += 1) {
+    h = (h * 31 + seed.charCodeAt(i)) % 1_000_000_007;
+  }
+  return `h${h}_${extrato.length}`;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -56,8 +55,48 @@ export async function POST(req: NextRequest) {
     }
 
     let userContent: string | ContentBlockParam[];
+    const extratoHash = hasText ? hashExtratoSimples(extrato) : null;
 
     if (hasText) {
+      // Cache: tenta reutilizar classificação salva (se a coluna existir no Supabase).
+      try {
+        const supabase = await createSupabaseClient();
+        const { data: cachedRows, error } = await supabase
+          .from("transacoes")
+          .select("data,descricao,valor,tipo,categoria")
+          .eq("extrato_hash", extratoHash)
+          .order("data", { ascending: true });
+
+        if (!error && Array.isArray(cachedRows) && cachedRows.length > 0) {
+          const transacoes = cachedRows as any[];
+          const totalEntradas = transacoes
+            .filter((t) => t.tipo === "entrada")
+            .reduce((acc, t) => acc + Number(t.valor || 0), 0);
+          const totalSaidas = transacoes
+            .filter((t) => t.tipo === "saida")
+            .reduce((acc, t) => acc + Number(t.valor || 0), 0);
+          const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
+            const k = String(t.categoria ?? "Outros");
+            acc[k] = (acc[k] || 0) + Number(t.valor || 0);
+            return acc;
+          }, {});
+
+          return NextResponse.json({
+            transacoes,
+            resumo: {
+              totalEntradas,
+              totalSaidas,
+              saldo: totalEntradas - totalSaidas,
+              porCategoria,
+            },
+            extratoHash,
+            cacheHit: true,
+          });
+        }
+      } catch {
+        // Se falhar (ex.: coluna não existe), segue sem cache.
+      }
+
       userContent = `Classifique este extrato bancário:\n\n${extrato}`;
     } else if (tipo === "application/pdf") {
       const pdfBuffer = Buffer.from(arquivo, "base64");
@@ -170,6 +209,8 @@ export async function POST(req: NextRequest) {
         saldo: totalEntradas - totalSaidas,
         porCategoria,
       },
+      extratoHash,
+      cacheHit: false,
     });
   } catch (error) {
     console.error("Erro no classificador:", error);

@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Dados não enviados' }, { status: 400 })
     }
 
-    const response = await client.messages.create({
+    const stream = client.messages.stream({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       system: `Você é um contador inteligente da plataforma ORYON, especializado em analisar dados financeiros de pequenas e médias empresas de forma simples, prática e estratégica.
@@ -66,14 +66,33 @@ ${JSON.stringify({
       ],
     })
 
-    const content = response.content[0]
-    if (content.type !== 'text') {
-      throw new Error('Resposta invalida do Claude')
-    }
+    const encoder = new TextEncoder()
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            for await (const event of stream) {
+              if (
+                event.type === 'content_block_delta' &&
+                event.delta.type === 'text_delta'
+              ) {
+                controller.enqueue(encoder.encode(event.delta.text))
+              }
+            }
+            controller.close()
+          } catch (err) {
+            controller.error(err)
+          }
+        },
+      }),
+      {
+        headers: {
+          'Content-Type': 'text/plain; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      },
+    )
 
-    const clean = content.text.replace(/```json|```/g, '').trim()
-    const resultado = JSON.parse(clean)
-    return NextResponse.json({ sucesso: true, data: resultado })
   } catch (error) {
     console.error('Erro no analista:', error)
     return NextResponse.json({ error: 'Erro ao analisar dados' }, { status: 500 })
