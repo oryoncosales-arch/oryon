@@ -956,6 +956,11 @@ export default function DashboardClient(props: {
           color: #111111 !important;
           border-color: rgba(0,0,0,0.12) !important;
         }
+        .light select { 
+          background: #FFFFFF !important; 
+          color: #111111 !important;
+          border-color: rgba(0,0,0,0.12) !important;
+        }
         .light .rounded-2xl { background: #FFFFFF !important; }
         .light nav button { color: #555555 !important; }
         .light nav button.active, .light nav button[class*="bg-"] { color: #111111 !important; }
