@@ -97,6 +97,8 @@ const money = new Intl.NumberFormat("pt-BR", {
   currency: "BRL",
 });
 
+const TRANSACOES_POR_PAGINA = 15;
+
 function formatDatePtBR(iso: string) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
@@ -503,6 +505,7 @@ export default function DashboardClient(props: {
   const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
   const [acoes, setAcoes] = useState<Acao[] | null>(null);
   const [extratoHash, setExtratoHash] = useState<string | null>(null);
+  const [paginaTransacoes, setPaginaTransacoes] = useState(1);
 
   const [mensagens, setMensagens] = useState<ChatMsg[]>([]);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
@@ -799,6 +802,7 @@ export default function DashboardClient(props: {
     setAcoes(null);
     setMensagens([]);
     setExtratoHash(null);
+    setPaginaTransacoes(1);
     try {
       const mime = file.type || "";
       const isText =
@@ -1956,9 +1960,24 @@ export default function DashboardClient(props: {
                       Transações ({transacoes.length})
                     </div>
                     <div className="divide-y divide-white/10">
-                      {transacoes.slice(0, 200).map((t, idx) => (
+                      {(() => {
+                        const totalPaginas = Math.max(
+                          1,
+                          Math.ceil(transacoes.length / TRANSACOES_POR_PAGINA),
+                        );
+                        const paginaAtual = Math.max(
+                          1,
+                          Math.min(paginaTransacoes, totalPaginas),
+                        );
+                        const inicio = (paginaAtual - 1) * TRANSACOES_POR_PAGINA;
+                        const fim = paginaAtual * TRANSACOES_POR_PAGINA;
+                        const pageItems = transacoes.slice(inicio, fim);
+
+                        return (
+                          <>
+                            {pageItems.map((t, idx) => (
                         <div
-                          key={`${t.data}-${idx}`}
+                          key={`${t.data}-${inicio + idx}`}
                           className="px-4 py-3 grid grid-cols-12 gap-3 items-start"
                         >
                           <div className="col-span-4 md:col-span-2 text-xs text-white/60">
@@ -1992,12 +2011,47 @@ export default function DashboardClient(props: {
                             </span>
                           </div>
                         </div>
-                      ))}
-                      {transacoes.length > 200 ? (
-                        <div className="px-4 py-3 text-xs text-white/40">
-                          Mostrando 200 transações por enquanto.
-                        </div>
-                      ) : null}
+                            ))}
+
+                            <div className="px-4 py-3 flex items-center justify-between gap-3 text-xs text-white/50">
+                              <div>
+                                Página {paginaAtual} de {totalPaginas} ·{" "}
+                                {transacoes.length} transações total
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPaginaTransacoes((p) => Math.max(1, p - 1))
+                                  }
+                                  disabled={paginaAtual <= 1}
+                                  className={clsx(
+                                    "rounded-lg border border-[#1D9E75]/20 px-3 py-2 text-white/70 hover:bg-[#1D9E75]/10",
+                                    paginaAtual <= 1 && "opacity-40",
+                                  )}
+                                >
+                                  ← Anterior
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    setPaginaTransacoes((p) =>
+                                      Math.min(totalPaginas, p + 1),
+                                    )
+                                  }
+                                  disabled={paginaAtual >= totalPaginas}
+                                  className={clsx(
+                                    "rounded-lg border border-[#1D9E75]/20 px-3 py-2 text-white/70 hover:bg-[#1D9E75]/10",
+                                    paginaAtual >= totalPaginas && "opacity-40",
+                                  )}
+                                >
+                                  Próximo →
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
 
