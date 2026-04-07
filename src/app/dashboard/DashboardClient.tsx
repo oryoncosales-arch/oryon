@@ -2,8 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PDFDocument } from "pdf-lib";
+import * as pdfjsLib from "pdfjs-dist";
 import { createClient } from "@/lib/supabase/client";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
 type TabKey = "upload" | "diagnostico" | "chat" | "acoes";
 
@@ -105,44 +107,20 @@ function clsx(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-const PDF_CHUNK_PAGES = 3;
-
-function uint8ArrayToBase64(bytes: Uint8Array): string {
-  const chunk = 0x8000;
-  let binary = "";
-  for (let i = 0; i < bytes.length; i += chunk) {
-    const sub = bytes.subarray(i, i + chunk);
-    binary += String.fromCharCode.apply(
-      null,
-      sub as unknown as number[],
-    );
+async function extrairTextoPdf(file: File): Promise<string> {
+  const data = new Uint8Array(await file.arrayBuffer());
+  const task = pdfjsLib.getDocument({ data });
+  const pdf = await task.promise;
+  const chunks: string[] = [];
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    const line = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ");
+    chunks.push(line);
   }
-  return btoa(binary);
-}
-
-function consolidarResultadosClassificador(
-  partes: { transacoes: Transacao[]; resumo: Resumo }[],
-): { transacoes: Transacao[]; resumo: Resumo } {
-  const transacoes = partes.flatMap((p) => p.transacoes);
-  const totalEntradas = transacoes
-    .filter((t) => t.tipo === "entrada")
-    .reduce((acc, t) => acc + t.valor, 0);
-  const totalSaidas = transacoes
-    .filter((t) => t.tipo === "saida")
-    .reduce((acc, t) => acc + t.valor, 0);
-  const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
-    acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
-    return acc;
-  }, {});
-  return {
-    transacoes,
-    resumo: {
-      totalEntradas,
-      totalSaidas,
-      saldo: totalEntradas - totalSaidas,
-      porCategoria,
-    },
-  };
+  return chunks.join("\n");
 }
 
 function daysInMonth(year: number, month: number) {
@@ -853,55 +831,17 @@ export default function DashboardClient(props: {
         setTransacoes(data.transacoes);
         setResumo(data.resumo);
       } else if (isPdf) {
-        const arrayBuffer = await file.arrayBuffer();
-        const srcDoc = await PDFDocument.load(arrayBuffer, {
-          ignoreEncryption: true,
-        });
-        const pageCount = srcDoc.getPageCount();
-
-        if (pageCount <= PDF_CHUNK_PAGES) {
-          const base64 = await new Promise<string>((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => {
-              const result = reader.result as string;
-              resolve(result.split(",")[1]);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(file);
-          });
-          setUploadStatusMessage("Classificando com IA...");
-          const data = await classificarPayload({
-            arquivo: base64,
-            tipo: "application/pdf",
-          });
-          setTransacoes(data.transacoes);
-          setResumo(data.resumo);
-        } else {
-          const resultados: { transacoes: Transacao[]; resumo: Resumo }[] = [];
-          for (let start = 0; start < pageCount; start += PDF_CHUNK_PAGES) {
-            const end = Math.min(start + PDF_CHUNK_PAGES, pageCount);
-            const indices = Array.from(
-              { length: end - start },
-              (_, i) => start + i,
-            );
-            setUploadStatusMessage(
-              `Processando página ${start + 1}-${end} de ${pageCount}...`,
-            );
-            const chunkDoc = await PDFDocument.create();
-            const copied = await chunkDoc.copyPages(srcDoc, indices);
-            copied.forEach((p) => chunkDoc.addPage(p));
-            const pdfBytes = await chunkDoc.save();
-            const base64 = uint8ArrayToBase64(pdfBytes);
-            const data = await classificarPayload({
-              arquivo: base64,
-              tipo: "application/pdf",
-            });
-            resultados.push(data);
-          }
-          const merged = consolidarResultadosClassificador(resultados);
-          setTransacoes(merged.transacoes);
-          setResumo(merged.resumo);
+        setUploadStatusMessage("Extraindo texto do PDF...");
+        const texto = await extrairTextoPdf(file);
+        if (!texto.trim()) {
+          throw new Error(
+            "Não foi possível extrair texto deste PDF. Tente outro arquivo ou use imagem/CSV.",
+          );
         }
+        setUploadStatusMessage("Classificando com IA...");
+        const data = await classificarPayload({ extrato: texto });
+        setTransacoes(data.transacoes);
+        setResumo(data.resumo);
       } else {
         throw new Error("Formato não suportado. Envie PDF, CSV, TXT, PNG ou JPG.");
       }
