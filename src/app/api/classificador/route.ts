@@ -2,8 +2,12 @@ export const maxDuration = 60;
 
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import type { ContentBlockParam } from "@anthropic-ai/sdk/resources/messages";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+/** PDFs acima disso (bytes decodificados do base64) viram texto via pdf-parse para reduzir payload ao Claude. */
+const PDF_TEXT_EXTRACT_THRESHOLD_BYTES = 3 * 1024 * 1024;
 
 const SYSTEM_PROMPT = `Você é um classificador financeiro especializado em extratos bancários brasileiros.
 Receba as linhas do extrato e retorne APENAS um JSON array válido.
@@ -51,31 +55,64 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const userContent: any = hasText
-      ? `Classifique este extrato bancário:\n\n${extrato}`
-      : [
-          tipo === "application/pdf"
-            ? {
-                type: "document",
-                source: {
-                  type: "base64",
-                  media_type: "application/pdf",
-                  data: arquivo,
-                },
-              }
-            : {
-                type: "image",
-                source: {
-                  type: "base64",
-                  media_type: tipo,
-                  data: arquivo,
-                },
+    let userContent: string | ContentBlockParam[];
+
+    if (hasText) {
+      userContent = `Classifique este extrato bancário:\n\n${extrato}`;
+    } else if (tipo === "application/pdf") {
+      const pdfBuffer = Buffer.from(arquivo, "base64");
+
+      if (pdfBuffer.length > PDF_TEXT_EXTRACT_THRESHOLD_BYTES) {
+        const { PDFParse } = await import("pdf-parse");
+        const parser = new PDFParse({ data: pdfBuffer });
+        try {
+          const textResult = await parser.getText();
+          const textoExtraido = textResult.text?.trim() ?? "";
+          if (!textoExtraido) {
+            return NextResponse.json(
+              {
+                erro:
+                  "Não foi possível extrair texto deste PDF. Envie CSV/TXT ou um PDF com camada de texto.",
               },
+              { status: 422 },
+            );
+          }
+          userContent = `Classifique este extrato bancário:\n\n${textoExtraido}`;
+        } finally {
+          await parser.destroy();
+        }
+      } else {
+        userContent = [
+          {
+            type: "document",
+            source: {
+              type: "base64",
+              media_type: "application/pdf",
+              data: arquivo,
+            },
+          },
           {
             type: "text",
             text: "Classifique este extrato bancário.",
           },
         ];
+      }
+    } else {
+      userContent = [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: tipo,
+            data: arquivo,
+          },
+        },
+        {
+          type: "text",
+          text: "Classifique este extrato bancário.",
+        },
+      ];
+    }
 
     const response = await client.messages.create({
       model: "claude-sonnet-4-6",
