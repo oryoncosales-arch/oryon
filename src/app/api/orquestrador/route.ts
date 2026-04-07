@@ -23,16 +23,40 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 800,
+      max_tokens: 1500,
       messages: [
         {
           role: 'user',
-          content: `Orquestrador financeiro: no máximo 3 ações (2–3) a partir do diagnóstico. Português, mensagens curtas e executáveis.
+          content: `Você é um orquestrador financeiro especializado no mercado brasileiro.
 
-JSON único, sem markdown:
+Com base no diagnóstico financeiro, gere de 4 a 6 ações concretas e variadas.
+
+As ações devem cobrir diferentes categorias:
+- Obrigações tributárias (DAS, DARF, INSS, FGTS, ISS, IRPJ conforme regime da empresa)
+- Controle de caixa e margem
+- Categorização e organização financeira
+- Alertas de compliance e regularização
+- Oportunidades de economia tributária
+- Comunicação com clientes ou fornecedores
+
+Contexto tributário brasileiro obrigatório:
+- MEI: DAS mensal até dia 20, limite de faturamento R$81k/ano
+- Simples Nacional: DAS mensal, DEFIS anual, limite R$4,8M/ano
+- Lucro Presumido: IRPJ + CSLL trimestral, PIS/COFINS mensal, ISS mensal
+- Identifica o regime pelo perfil da empresa e adapta as ações
+- Menciona prazos reais (ex: "DAS vence dia 20 de cada mês")
+
+Regras:
+- Responda em português do Brasil
+- Mensagens prontas para copiar e enviar
+- Seja específico com valores e prazos quando possível
+- Nunca invente dados que não estão no diagnóstico
+
+Retorne APENAS este JSON sem markdown:
 {"acoes":[{"destinatario":"string","assunto":"string","mensagem":"string","prioridade":"alta"|"media"|"baixa"}]}
 
 EMPRESA: ${JSON.stringify(empresa)}
+CONTATO: ${JSON.stringify(contato)}
 DIAGNÓSTICO: ${JSON.stringify(diagnostico)}`,
         },
       ],
