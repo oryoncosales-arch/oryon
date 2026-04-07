@@ -7,13 +7,10 @@ import { createClient as createSupabaseClient } from "@/lib/supabase/server";
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-/** PDFs acima disso (bytes decodificados do base64) viram texto via pdf-parse para reduzir payload ao Claude. */
-const PDF_TEXT_EXTRACT_THRESHOLD_BYTES = 3 * 1024 * 1024;
-
 const SYSTEM_PROMPT =
   'Classificador de extratos bancários BR. Retorne APENAS JSON array:\n' +
   '[{data:YYYY-MM-DD,descricao:string,valor:number,tipo:entrada|saida,categoria:Receita|Despesa Operacional|Folha de Pagamento|Impostos|Fornecedores|Aluguel|Utilities|Taxas Bancárias|Transferência|Outros}]\n' +
-  'Regras: valor sempre positivo, tipo por sinal, sem markdown.';
+  'Regras: valor sempre positivo, tipo por sinal (crédito=entrada, débito=saida), sem markdown, inclua TODAS as transações sem omitir nenhuma.';
 
 function hashExtratoSimples(extrato: string) {
   const seed = `${extrato.slice(0, 500)}::${extrato.length}`;
@@ -58,7 +55,7 @@ export async function POST(req: NextRequest) {
     const extratoHash = hasText ? hashExtratoSimples(extrato) : null;
 
     if (hasText) {
-      // Cache: tenta reutilizar classificação salva (se a coluna existir no Supabase).
+      // Cache: tenta reutilizar classificação salva
       try {
         const supabase = await createSupabaseClient();
         const { data: cachedRows, error } = await supabase
@@ -94,48 +91,10 @@ export async function POST(req: NextRequest) {
           });
         }
       } catch {
-        // Se falhar (ex.: coluna não existe), segue sem cache.
+        // Se falhar, segue sem cache
       }
 
-      userContent = `Classifique este extrato bancário:\n\n${extrato}`;
-    } else if (tipo === "application/pdf") {
-      const pdfBuffer = Buffer.from(arquivo, "base64");
-
-      if (pdfBuffer.length > PDF_TEXT_EXTRACT_THRESHOLD_BYTES) {
-        const { PDFParse } = await import("pdf-parse");
-        const parser = new PDFParse({ data: pdfBuffer });
-        try {
-          const textResult = await parser.getText();
-          const textoExtraido = textResult.text?.trim() ?? "";
-          if (!textoExtraido) {
-            return NextResponse.json(
-              {
-                erro:
-                  "Não foi possível extrair texto deste PDF. Envie CSV/TXT ou um PDF com camada de texto.",
-              },
-              { status: 422 },
-            );
-          }
-          userContent = `Classifique este extrato bancário:\n\n${textoExtraido}`;
-        } finally {
-          await parser.destroy();
-        }
-      } else {
-        userContent = [
-          {
-            type: "document",
-            source: {
-              type: "base64",
-              media_type: "application/pdf",
-              data: arquivo,
-            },
-          },
-          {
-            type: "text",
-            text: "Classifique este extrato bancário.",
-          },
-        ];
-      }
+      userContent = `Classifique TODAS as transações deste extrato bancário sem omitir nenhuma:\n\n${extrato}`;
     } else {
       userContent = [
         {
@@ -148,14 +107,14 @@ export async function POST(req: NextRequest) {
         },
         {
           type: "text",
-          text: "Classifique este extrato bancário.",
+          text: "Classifique TODAS as transações deste extrato bancário sem omitir nenhuma.",
         },
       ];
     }
 
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
-      max_tokens: 4000,
+      max_tokens: 8000,
       system: SYSTEM_PROMPT,
       messages: [
         {
@@ -171,14 +130,21 @@ export async function POST(req: NextRequest) {
     let transacoes;
     try {
       const clean = content.text.replace(/```json|```/g, "").trim();
-      // Se o JSON foi cortado, tenta encontrar o último objeto completo
-      const lastBracket = clean.lastIndexOf("}");
-      const fixedClean =
-        lastBracket !== -1 ? clean.slice(0, lastBracket + 1) + "]" : clean;
-      const jsonStr = fixedClean.startsWith("[") ? fixedClean : "[" + fixedClean;
+
+      let jsonStr = clean;
+      if (!jsonStr.startsWith("[")) jsonStr = "[" + jsonStr;
+
+      if (!jsonStr.endsWith("]")) {
+        const lastBracket = jsonStr.lastIndexOf("}");
+        if (lastBracket !== -1) {
+          jsonStr = jsonStr.slice(0, lastBracket + 1) + "]";
+        } else {
+          jsonStr = jsonStr + "]";
+        }
+      }
+
       transacoes = JSON.parse(jsonStr);
     } catch {
-      // Tenta parse direto como fallback
       try {
         transacoes = JSON.parse(content.text);
       } catch {
@@ -190,14 +156,14 @@ export async function POST(req: NextRequest) {
 
     const totalEntradas = transacoes
       .filter((t) => t.tipo === "entrada")
-      .reduce((acc, t) => acc + t.valor, 0);
+      .reduce((acc, t) => acc + Number(t.valor || 0), 0);
 
     const totalSaidas = transacoes
       .filter((t) => t.tipo === "saida")
-      .reduce((acc, t) => acc + t.valor, 0);
+      .reduce((acc, t) => acc + Number(t.valor || 0), 0);
 
     const porCategoria = transacoes.reduce<Record<string, number>>((acc, t) => {
-      acc[t.categoria] = (acc[t.categoria] || 0) + t.valor;
+      acc[t.categoria] = (acc[t.categoria] || 0) + Number(t.valor || 0);
       return acc;
     }, {});
 
