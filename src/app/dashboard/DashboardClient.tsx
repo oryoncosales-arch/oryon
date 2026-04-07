@@ -86,6 +86,13 @@ type Contrato = {
   dia_vencimento: number;
   data_inicio: string;
   status: ContratoStatus;
+  email_cliente?: string | null;
+  nome_responsavel?: string | null;
+  whatsapp?: string | null;
+  tipo_servico?: string | null;
+  regime_tributario?: string | null;
+  forma_pagamento?: string | null;
+  observacoes?: string | null;
   created_at?: string;
 };
 
@@ -525,6 +532,25 @@ function prioridadeColors(p: Acao["prioridade"]) {
   return "bg-[#1D9E75]/15 text-[#1D9E75] border-[#1D9E75]/25";
 }
 
+function tipoServicoBadge(tipo: string | null | undefined) {
+  const key = (tipo ?? "").toLowerCase();
+  if (key.includes("completo")) return "bg-[#1D9E75]/15 text-[#5DCAA5] border-[#1D9E75]/25";
+  if (key.includes("contabil")) return "bg-blue-500/15 text-blue-300 border-blue-500/25";
+  if (key.includes("folha")) return "bg-[#A78BFA]/15 text-[#C4B5FD] border-[#A78BFA]/25";
+  if (key.includes("fiscal")) return "bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/25";
+  if (key.includes("consult")) return "bg-white/10 text-white/70 border-white/15";
+  return "bg-white/5 text-white/50 border-white/10";
+}
+
+function regimeBadge(regime: string | null | undefined) {
+  const key = (regime ?? "").toLowerCase();
+  if (key.includes("mei")) return "bg-[#5DCAA5]/15 text-[#5DCAA5] border-[#5DCAA5]/25";
+  if (key.includes("simples")) return "bg-[#1D9E75]/15 text-[#5DCAA5] border-[#1D9E75]/25";
+  if (key.includes("presum")) return "bg-[#EAB308]/15 text-[#EAB308] border-[#EAB308]/25";
+  if (key.includes("real")) return "bg-[#F97316]/15 text-[#FDBA74] border-[#F97316]/25";
+  return "bg-white/5 text-white/50 border-white/10";
+}
+
 function categoriaPill(categoria: string) {
   const key = categoria.toLowerCase();
   if (key.includes("receita")) return "bg-[#1D9E75]/15 text-[#5DCAA5] border-[#1D9E75]/25";
@@ -571,10 +597,28 @@ export default function DashboardClient(props: {
   const [novoContratoValor, setNovoContratoValor] = useState("");
   const [novoContratoDia, setNovoContratoDia] = useState("");
   const [novoContratoInicio, setNovoContratoInicio] = useState("");
+  const [novoContratoNomeResponsavel, setNovoContratoNomeResponsavel] = useState("");
+  const [novoContratoEmail, setNovoContratoEmail] = useState("");
+  const [novoContratoWhatsapp, setNovoContratoWhatsapp] = useState("");
+  const [novoContratoTipoServico, setNovoContratoTipoServico] = useState("");
+  const [novoContratoRegime, setNovoContratoRegime] = useState("");
+  const [novoContratoFormaPagamento, setNovoContratoFormaPagamento] = useState("");
+  const [novoContratoObservacoes, setNovoContratoObservacoes] = useState("");
   const [salvandoContrato, setSalvandoContrato] = useState(false);
 
   const [editingContratoId, setEditingContratoId] = useState<string | null>(null);
   const [avisosEnviados, setAvisosEnviados] = useState<Record<string, boolean>>({});
+
+  const [modalCobranca, setModalCobranca] = useState<{
+    contratoId: string;
+    nomeEmpresa: string;
+    valorMensal: number;
+    dataVencimento: string;
+    emailCliente?: string | null;
+  } | null>(null);
+  const [emailDestinatario, setEmailDestinatario] = useState("");
+  const [enviandoEmail, setEnviandoEmail] = useState(false);
+  const [erroEmailCobranca, setErroEmailCobranca] = useState<string | null>(null);
 
   const [dragOver, setDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -917,6 +961,13 @@ export default function DashboardClient(props: {
         dia_vencimento: dia,
         data_inicio: novoContratoInicio,
         status: "ativo",
+        nome_responsavel: novoContratoNomeResponsavel.trim() || null,
+        email_cliente: novoContratoEmail.trim() || null,
+        whatsapp: novoContratoWhatsapp.trim() || null,
+        tipo_servico: novoContratoTipoServico || null,
+        regime_tributario: novoContratoRegime || null,
+        forma_pagamento: novoContratoFormaPagamento || null,
+        observacoes: novoContratoObservacoes.trim() || null,
       });
       if (error) throw new Error(error.message);
       setModalContrato(false);
@@ -924,12 +975,34 @@ export default function DashboardClient(props: {
       setNovoContratoValor("");
       setNovoContratoDia("");
       setNovoContratoInicio("");
+      setNovoContratoNomeResponsavel("");
+      setNovoContratoEmail("");
+      setNovoContratoWhatsapp("");
+      setNovoContratoTipoServico("");
+      setNovoContratoRegime("");
+      setNovoContratoFormaPagamento("");
+      setNovoContratoObservacoes("");
       router.refresh();
     } catch (e) {
       setErro(e instanceof Error ? e.message : "Erro ao criar contrato.");
     } finally {
       setSalvandoContrato(false);
     }
+  }
+
+  function fecharModalContrato() {
+    setModalContrato(false);
+    setNovoContratoEmpresaId("");
+    setNovoContratoValor("");
+    setNovoContratoDia("");
+    setNovoContratoInicio("");
+    setNovoContratoNomeResponsavel("");
+    setNovoContratoEmail("");
+    setNovoContratoWhatsapp("");
+    setNovoContratoTipoServico("");
+    setNovoContratoRegime("");
+    setNovoContratoFormaPagamento("");
+    setNovoContratoObservacoes("");
   }
 
   async function atualizarStatusContrato(id: string, status: ContratoStatus) {
@@ -941,6 +1014,41 @@ export default function DashboardClient(props: {
     }
     setEditingContratoId(null);
     router.refresh();
+  }
+
+  async function enviarEmailCobranca() {
+    if (!modalCobranca) return;
+    setErroEmailCobranca(null);
+    const destinatario = emailDestinatario.trim();
+    if (!destinatario) {
+      setErroEmailCobranca("Informe o email do destinatário.");
+      return;
+    }
+    setEnviandoEmail(true);
+    try {
+      const res = await fetch("/api/email/cobranca", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          destinatario,
+          nomeEmpresa: modalCobranca.nomeEmpresa,
+          valorMensal: modalCobranca.valorMensal,
+          dataVencimento: modalCobranca.dataVencimento,
+          nomeEscritorio: props.escritorio.nome,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(j?.erro ?? "Falha ao enviar email.");
+      }
+      setModalCobranca(null);
+      setEmailDestinatario("");
+      setAvisosEnviados((prev) => ({ ...prev, [modalCobranca.contratoId]: true }));
+    } catch (e) {
+      setErroEmailCobranca(e instanceof Error ? e.message : "Erro ao enviar email.");
+    } finally {
+      setEnviandoEmail(false);
+    }
   }
 
   function openFilePicker() {
@@ -1563,10 +1671,13 @@ export default function DashboardClient(props: {
           role="dialog"
           aria-modal="true"
         >
-          <div className="w-full max-w-md rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
             <div className="text-lg font-semibold">Novo contrato</div>
-            <div className="mt-4 space-y-3">
+            <div className="mt-4 space-y-5">
               <div>
+                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
+                  Empresa
+                </div>
                 <label className="block text-xs text-white/50 mb-1">Empresa</label>
                 <select
                   value={novoContratoEmpresaId}
@@ -1581,41 +1692,146 @@ export default function DashboardClient(props: {
                   ))}
                 </select>
               </div>
+
               <div>
-                <label className="block text-xs text-white/50 mb-1">Valor mensal (R$)</label>
-                <input
-                  value={novoContratoValor}
-                  onChange={(e) => setNovoContratoValor(e.target.value)}
-                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                  placeholder="1500,00"
-                />
+                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
+                  Responsável
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">
+                      Nome do responsável (opcional)
+                    </label>
+                    <input
+                      value={novoContratoNomeResponsavel}
+                      onChange={(e) => setNovoContratoNomeResponsavel(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                      placeholder="Nome"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">
+                      Email do cliente (opcional)
+                    </label>
+                    <input
+                      type="email"
+                      value={novoContratoEmail}
+                      onChange={(e) => setNovoContratoEmail(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                      placeholder="email@cliente.com.br"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">
+                      WhatsApp (opcional)
+                    </label>
+                    <input
+                      value={novoContratoWhatsapp}
+                      onChange={(e) => setNovoContratoWhatsapp(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                      placeholder="11999999999"
+                    />
+                  </div>
+                </div>
               </div>
+
               <div>
-                <label className="block text-xs text-white/50 mb-1">Dia de vencimento</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={31}
-                  value={novoContratoDia}
-                  onChange={(e) => setNovoContratoDia(e.target.value)}
-                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
-                  placeholder="10"
-                />
+                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
+                  Contrato
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Valor mensal (R$)</label>
+                    <input
+                      value={novoContratoValor}
+                      onChange={(e) => setNovoContratoValor(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                      placeholder="1500,00"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Dia de vencimento</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={31}
+                      value={novoContratoDia}
+                      onChange={(e) => setNovoContratoDia(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                      placeholder="10"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Data de início</label>
+                    <input
+                      type="date"
+                      value={novoContratoInicio}
+                      onChange={(e) => setNovoContratoInicio(e.target.value)}
+                      className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Tipo de serviço</label>
+                    <select
+                      value={novoContratoTipoServico}
+                      onChange={(e) => setNovoContratoTipoServico(e.target.value)}
+                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    >
+                      <option value="">Selecione...</option>
+                      <option value="Contabilidade">Contabilidade</option>
+                      <option value="Folha de pagamento">Folha de pagamento</option>
+                      <option value="Fiscal">Fiscal</option>
+                      <option value="Consultoria">Consultoria</option>
+                      <option value="Completo">Completo</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Regime tributário</label>
+                    <select
+                      value={novoContratoRegime}
+                      onChange={(e) => setNovoContratoRegime(e.target.value)}
+                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    >
+                      <option value="">Selecione...</option>
+                      <option value="MEI">MEI</option>
+                      <option value="Simples Nacional">Simples Nacional</option>
+                      <option value="Lucro Presumido">Lucro Presumido</option>
+                      <option value="Lucro Real">Lucro Real</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-white/50 mb-1">Forma de pagamento</label>
+                    <select
+                      value={novoContratoFormaPagamento}
+                      onChange={(e) => setNovoContratoFormaPagamento(e.target.value)}
+                      className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    >
+                      <option value="">Selecione...</option>
+                      <option value="PIX">PIX</option>
+                      <option value="Boleto">Boleto</option>
+                      <option value="Transferência">Transferência</option>
+                    </select>
+                  </div>
+                </div>
               </div>
+
               <div>
-                <label className="block text-xs text-white/50 mb-1">Data de início</label>
-                <input
-                  type="date"
-                  value={novoContratoInicio}
-                  onChange={(e) => setNovoContratoInicio(e.target.value)}
+                <div className="text-[10px] uppercase tracking-wider text-white/30 font-medium mb-2">
+                  Observações
+                </div>
+                <textarea
+                  rows={3}
+                  value={novoContratoObservacoes}
+                  onChange={(e) => setNovoContratoObservacoes(e.target.value)}
                   className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="Informações adicionais sobre o contrato..."
                 />
               </div>
             </div>
             <div className="mt-6 flex gap-2 justify-end">
               <button
                 type="button"
-                onClick={() => setModalContrato(false)}
+                onClick={fecharModalContrato}
                 className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
               >
                 Cancelar
@@ -1760,6 +1976,76 @@ export default function DashboardClient(props: {
                 className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
               >
                 {salvandoDesignacao ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {modalCobranca ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[#1D9E75]/20 bg-[#0d0d0d] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Enviar aviso de cobrança</div>
+            <div className="mt-4 space-y-3">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="text-xs text-white/50">Empresa</div>
+                <div className="mt-1 text-sm text-white/90 truncate">
+                  {modalCobranca.nomeEmpresa}
+                </div>
+                <div className="mt-3 text-xs text-white/50">Valor mensal</div>
+                <div className="mt-1 text-sm text-white/90">
+                  {money.format(Number(modalCobranca.valorMensal))}
+                </div>
+                <div className="mt-3 text-xs text-white/50">Vencimento</div>
+                <div className="mt-1 text-sm text-white/90">
+                  {modalCobranca.dataVencimento}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs text-white/50 mb-1">
+                  Email do destinatário
+                </label>
+                <input
+                  type="email"
+                  value={emailDestinatario}
+                  onChange={(e) => setEmailDestinatario(e.target.value)}
+                  className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  placeholder="email@cliente.com.br"
+                />
+              </div>
+
+              {erroEmailCobranca ? (
+                <div className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                  {erroEmailCobranca}
+                </div>
+              ) : null}
+            </div>
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                disabled={enviandoEmail}
+                onClick={() => {
+                  setModalCobranca(null);
+                  setErroEmailCobranca(null);
+                  setEmailDestinatario("");
+                }}
+                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5 disabled:opacity-60"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={enviandoEmail || !emailDestinatario.trim()}
+                onClick={() => void enviarEmailCobranca()}
+                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
+              >
+                {enviandoEmail ? "Enviando..." : "Enviar"}
               </button>
             </div>
           </div>
@@ -2384,6 +2670,13 @@ export default function DashboardClient(props: {
                   type="button"
                   onClick={() => {
                     setNovoContratoEmpresaId(props.empresas[0]?.id ?? "");
+                    setNovoContratoNomeResponsavel("");
+                    setNovoContratoEmail("");
+                    setNovoContratoWhatsapp("");
+                    setNovoContratoTipoServico("");
+                    setNovoContratoRegime("");
+                    setNovoContratoFormaPagamento("");
+                    setNovoContratoObservacoes("");
                     setModalContrato(true);
                   }}
                   className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110"
@@ -2392,10 +2685,13 @@ export default function DashboardClient(props: {
                 </button>
               </div>
               <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden overflow-x-auto">
-                <table className="w-full text-sm min-w-[640px]">
+                <table className="w-full text-sm min-w-[920px]">
                   <thead>
                     <tr className="text-left text-xs text-white/40 border-b border-white/10">
                       <th className="px-4 py-2 font-medium">Empresa</th>
+                      <th className="px-4 py-2 font-medium">Responsável</th>
+                      <th className="px-4 py-2 font-medium">Tipo</th>
+                      <th className="px-4 py-2 font-medium">Regime</th>
                       <th className="px-4 py-2 font-medium">Valor mensal</th>
                       <th className="px-4 py-2 font-medium">Dia venc.</th>
                       <th className="px-4 py-2 font-medium">Status</th>
@@ -2408,6 +2704,29 @@ export default function DashboardClient(props: {
                       <tr key={c.id} className="border-b border-white/5">
                         <td className="px-4 py-3 text-white/90 truncate max-w-[120px]">
                           {empresaNomePorId.get(c.empresa_id) ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-white/70 truncate max-w-[140px]">
+                          {c.nome_responsavel?.trim() ? c.nome_responsavel : "—"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={clsx(
+                              "inline-flex rounded-full border px-2 py-0.5 text-xs whitespace-nowrap",
+                              tipoServicoBadge(c.tipo_servico),
+                            )}
+                          >
+                            {c.tipo_servico ?? "—"}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={clsx(
+                              "inline-flex rounded-full border px-2 py-0.5 text-xs whitespace-nowrap",
+                              regimeBadge(c.regime_tributario),
+                            )}
+                          >
+                            {c.regime_tributario ?? "—"}
+                          </span>
                         </td>
                         <td className="px-4 py-3 whitespace-nowrap">
                           {money.format(Number(c.valor_mensal))}
@@ -2497,9 +2816,19 @@ export default function DashboardClient(props: {
                       </span>
                       <button
                         type="button"
-                        onClick={() =>
-                          setAvisosEnviados((prev) => ({ ...prev, [c.id]: true }))
-                        }
+                        onClick={() => {
+                          const nomeEmpresa = empresaNomePorId.get(c.empresa_id) ?? "—";
+                          const dataVenc = due.toLocaleDateString("pt-BR");
+                          setErroEmailCobranca(null);
+                          setModalCobranca({
+                            contratoId: c.id,
+                            nomeEmpresa,
+                            valorMensal: Number(c.valor_mensal),
+                            dataVencimento: dataVenc,
+                            emailCliente: c.email_cliente ?? null,
+                          });
+                          setEmailDestinatario(c.email_cliente ?? "");
+                        }}
                         className="rounded-xl border border-[#1D9E75]/25 bg-[#1D9E75]/10 px-3 py-2 text-xs font-semibold text-[#5DCAA5] hover:bg-[#1D9E75]/15"
                       >
                         {avisosEnviados[c.id] ? "Aviso enviado!" : "Enviar aviso por email"}
