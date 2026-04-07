@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
 
-type TabKey = "upload" | "diagnostico" | "chat" | "acoes";
+type TabKey = "upload" | "diagnostico" | "chat" | "acoes" | "historico";
 
 type Escritorio = {
   id: string;
@@ -506,6 +506,20 @@ function DollarIcon() {
   );
 }
 
+function HistoricoIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+      <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8" />
+      <path
+        d="M12 7v5l3 3"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 function Spinner() {
   return (
     <div
@@ -641,6 +655,15 @@ export default function DashboardClient(props: {
   const [resumo, setResumo] = useState<Resumo | null>(null);
   const [diagnostico, setDiagnostico] = useState<Diagnostico | null>(null);
   const [acoes, setAcoes] = useState<Acao[] | null>(null);
+  const [historicoTransacoes, setHistoricoTransacoes] = useState<Transacao[] | null>(null);
+  const [historicoLoading, setHistoricoLoading] = useState(false);
+  const [historicoPeriodo, setHistoricoPeriodo] = useState(() => {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    return `${y}-${m}`;
+  });
+  const [historicoPagina, setHistoricoPagina] = useState(1);
   const [extratoHash, setExtratoHash] = useState<string | null>(null);
   const [paginaTransacoes, setPaginaTransacoes] = useState(1);
 
@@ -654,6 +677,8 @@ export default function DashboardClient(props: {
   const [salvarLoading, setSalvarLoading] = useState(false);
   const [acoesLoading, setAcoesLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+
+  const [tema, setTema] = useState<"dark" | "light">("dark");
 
   const [meuPerfil, setMeuPerfil] = useState<FuncionarioRow | null>(
     props.initialMeuPerfil,
@@ -868,9 +893,106 @@ export default function DashboardClient(props: {
     setResumo(null);
     setDiagnostico(null);
     setAcoes(null);
+    setHistoricoTransacoes(null);
+    setHistoricoPagina(1);
     setMensagens([]);
     setAbaEmpresa("upload");
   }, [empresaSelecionadaId]);
+
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("mais-contabil-tema");
+      if (saved === "light" || saved === "dark") {
+        setTema(saved);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (tema === "light") root.classList.add("light");
+    else root.classList.remove("light");
+    try {
+      localStorage.setItem("mais-contabil-tema", tema);
+    } catch {
+      // ignore
+    }
+
+    let style = document.getElementById("mais-contabil-tema") as HTMLStyleElement | null;
+    if (!style) {
+      style = document.createElement("style");
+      style.id = "mais-contabil-tema";
+      style.textContent = `
+        .light {
+          --bg-main: #F5F5F0;
+          --bg-sidebar: #FFFFFF;
+          color-scheme: light;
+        }
+        .light body, .light #dashboard-root {
+          background-color: #F5F5F0 !important;
+          color: #111111 !important;
+        }
+        .light #dashboard-root aside {
+          background-color: #FFFFFF !important;
+          border-color: rgba(0,0,0,0.1) !important;
+        }
+        .light #dashboard-root main {
+          background-color: #F5F5F0 !important;
+        }
+        .light #dashboard-root .text-white { color: #111111 !important; }
+        .light #dashboard-root .text-white\\/90 { color: #111111 !important; }
+        .light #dashboard-root .text-white\\/80 { color: #111111 !important; }
+        .light #dashboard-root .text-white\\/70 { color: #555555 !important; }
+        .light #dashboard-root .text-white\\/60 { color: #555555 !important; }
+        .light #dashboard-root .text-white\\/50 { color: #555555 !important; }
+        .light #dashboard-root .text-white\\/40 { color: #555555 !important; }
+        .light #dashboard-root .text-white\\/30 { color: #555555 !important; }
+        .light #dashboard-root .border-white\\/10 { border-color: rgba(0,0,0,0.1) !important; }
+        .light #dashboard-root .border-white\\/15 { border-color: rgba(0,0,0,0.1) !important; }
+        .light #dashboard-root .bg-white\\/5 { background-color: rgba(0,0,0,0.03) !important; }
+      `;
+      document.head.appendChild(style);
+    }
+  }, [tema]);
+
+  useEffect(() => {
+    if (!empresaSelecionada) return;
+    if (abaEmpresa !== "historico") return;
+    let cancelled = false;
+    setHistoricoLoading(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("transacoes")
+        .select("*")
+        .eq("empresa_id", empresaSelecionada.id)
+        .order("data", { ascending: false });
+      if (cancelled) return;
+      if (error) {
+        setErro(error.message);
+        setHistoricoTransacoes([]);
+      } else {
+        const rows = (data ?? []) as any as Transacao[];
+        setHistoricoTransacoes(rows);
+        // se o período atual não existir, cai para o mais recente disponível
+        const meses = Array.from(
+          new Set(rows.map((t) => String(t.data ?? "").slice(0, 7)).filter(Boolean)),
+        ).sort((a, b) => (a < b ? 1 : -1));
+        if (meses.length && !meses.includes(historicoPeriodo)) {
+          setHistoricoPeriodo(meses[0]);
+        }
+      }
+      setHistoricoLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [abaEmpresa, empresaSelecionada?.id, supabase]); 
+
+  useEffect(() => {
+    setHistoricoPagina(1);
+  }, [historicoPeriodo]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -1670,6 +1792,7 @@ export default function DashboardClient(props: {
         { key: "diagnostico" as const, label: "Diagnóstico", icon: <ChartIcon /> },
         { key: "chat" as const, label: "Chat", icon: <ChatIcon /> },
         { key: "acoes" as const, label: "Ações", icon: <BoltIcon /> },
+        { key: "historico" as const, label: "Histórico", icon: <HistoricoIcon /> },
       ] as const,
     [],
   );
@@ -1703,7 +1826,7 @@ export default function DashboardClient(props: {
   }, [podeGerirEscritorio]);
 
   return (
-    <div className="min-h-screen bg-[#080808] text-white flex">
+    <div id="dashboard-root" className="min-h-screen bg-[#080808] text-white flex">
       {modalNovoCliente ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center px-4"
@@ -2498,7 +2621,14 @@ export default function DashboardClient(props: {
           ) : null}
         </div>
 
-        <div className="mt-auto px-5 pb-5 pt-6">
+        <div className="mt-auto px-5 pb-5 pt-6 space-y-2">
+          <button
+            type="button"
+            onClick={() => setTema((t) => (t === "dark" ? "light" : "dark"))}
+            className="w-full rounded-lg border border-white/10 px-3 py-2 text-sm text-white/60 hover:text-white"
+          >
+            {tema === "dark" ? "☀ Claro" : "🌙 Escuro"}
+          </button>
           <button
             type="button"
             onClick={onLogout}
@@ -3641,6 +3771,183 @@ export default function DashboardClient(props: {
                   ))}
                 </div>
               )}
+            </section>
+          ) : null}
+
+          {abaEmpresa === "historico" ? (
+            <section className="space-y-5">
+              <div className="flex items-end justify-between gap-4 flex-wrap">
+                <div>
+                  <div className="text-2xl font-semibold">Histórico de extratos</div>
+                  <div className="mt-1 text-sm text-white/50">
+                    Transações salvas por período
+                  </div>
+                </div>
+                <div className="min-w-[180px]">
+                  <label className="block text-xs text-white/50 mb-1">Período</label>
+                  <select
+                    value={historicoPeriodo}
+                    onChange={(e) => setHistoricoPeriodo(e.target.value)}
+                    className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    disabled={historicoLoading}
+                  >
+                    {Array.from(
+                      new Set(
+                        (historicoTransacoes ?? [])
+                          .map((t) => String(t.data ?? "").slice(0, 7))
+                          .filter(Boolean),
+                      ),
+                    )
+                      .sort((a, b) => (a < b ? 1 : -1))
+                      .map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              </div>
+
+              {historicoLoading ? (
+                <div className="flex items-center gap-3 text-sm text-white/70">
+                  <Spinner />
+                  <span>Carregando histórico...</span>
+                </div>
+              ) : null}
+
+              {(() => {
+                const all = historicoTransacoes ?? [];
+                const doPeriodo = all.filter((t) => String(t.data ?? "").startsWith(historicoPeriodo));
+                const entradas = doPeriodo
+                  .filter((t) => t.tipo === "entrada")
+                  .reduce((acc, t) => acc + Number(t.valor || 0), 0);
+                const saidas = doPeriodo
+                  .filter((t) => t.tipo === "saida")
+                  .reduce((acc, t) => acc + Number(t.valor || 0), 0);
+                const saldo = entradas - saidas;
+
+                const totalPaginas = Math.max(
+                  1,
+                  Math.ceil(doPeriodo.length / TRANSACOES_POR_PAGINA),
+                );
+                const paginaAtual = Math.max(1, Math.min(historicoPagina, totalPaginas));
+                const inicio = (paginaAtual - 1) * TRANSACOES_POR_PAGINA;
+                const fim = paginaAtual * TRANSACOES_POR_PAGINA;
+                const pageItems = doPeriodo.slice(inicio, fim);
+
+                return (
+                  <>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                      <div className="rounded-2xl border border-[#1D9E75]/20 bg-white/5 p-4">
+                        <div className="text-xs text-white/50">Total Entradas</div>
+                        <div className="mt-2 text-xl font-semibold text-[#5DCAA5]">
+                          {money.format(entradas)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-red-500/20 bg-white/5 p-4">
+                        <div className="text-xs text-white/50">Total Saídas</div>
+                        <div className="mt-2 text-xl font-semibold text-red-400">
+                          {money.format(saidas)}
+                        </div>
+                      </div>
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+                        <div className="text-xs text-white/50">Saldo</div>
+                        <div
+                          className={clsx(
+                            "mt-2 text-xl font-semibold",
+                            saldo >= 0 ? "text-[#5DCAA5]" : "text-red-400",
+                          )}
+                        >
+                          {money.format(saldo)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {!doPeriodo.length ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/5 p-8 text-center text-white/60">
+                        Nenhuma transação encontrada para este período.
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden">
+                        <div className="px-4 py-3 border-b border-white/10 text-sm text-white/70">
+                          Transações ({doPeriodo.length})
+                        </div>
+                        <div className="divide-y divide-white/10">
+                          {pageItems.map((t, idx) => (
+                            <div
+                              key={`${t.data}-${inicio + idx}`}
+                              className="px-4 py-3 grid grid-cols-12 gap-3 items-start"
+                            >
+                              <div className="col-span-4 md:col-span-2 text-xs text-white/60">
+                                {formatDatePtBR(t.data)}
+                              </div>
+                              <div className="col-span-8 md:col-span-6 min-w-0">
+                                <div className="text-sm text-white/90 truncate">
+                                  {t.descricao}
+                                </div>
+                              </div>
+                              <div className="col-span-6 md:col-span-2">
+                                <span
+                                  className={clsx(
+                                    "inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold",
+                                    t.tipo === "entrada"
+                                      ? "bg-[#1D9E75]/15 text-[#5DCAA5] border-[#1D9E75]/25"
+                                      : "bg-red-500/15 text-red-300 border-red-500/25",
+                                  )}
+                                >
+                                  {money.format(t.valor)}
+                                </span>
+                              </div>
+                              <div className="col-span-6 md:col-span-2 flex justify-end md:justify-start">
+                                <span
+                                  className={clsx(
+                                    "inline-flex items-center rounded-full border px-2 py-1 text-xs",
+                                    categoriaPill(t.categoria),
+                                  )}
+                                >
+                                  {t.categoria}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+
+                          <div className="px-4 py-3 flex items-center justify-between gap-3 text-xs text-white/50">
+                            <div>
+                              Página {paginaAtual} de {totalPaginas} · {doPeriodo.length} transações total
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setHistoricoPagina((p) => Math.max(1, p - 1))}
+                                disabled={paginaAtual <= 1}
+                                className={clsx(
+                                  "rounded-lg border border-[#1D9E75]/20 px-3 py-2 text-white/70 hover:bg-[#1D9E75]/10",
+                                  paginaAtual <= 1 && "opacity-40",
+                                )}
+                              >
+                                ← Anterior
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setHistoricoPagina((p) => Math.min(totalPaginas, p + 1))
+                                }
+                                disabled={paginaAtual >= totalPaginas}
+                                className={clsx(
+                                  "rounded-lg border border-[#1D9E75]/20 px-3 py-2 text-white/70 hover:bg-[#1D9E75]/10",
+                                  paginaAtual >= totalPaginas && "opacity-40",
+                                )}
+                              >
+                                Próximo →
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
             </section>
           ) : null}
             </>
