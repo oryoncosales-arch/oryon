@@ -10,6 +10,9 @@ type MeuPerfilRow = {
   email: string;
   cargo: "socio" | "contador" | "assistente";
   ativo: boolean;
+  salario?: number | null;
+  dia_pagamento?: number | null;
+  comissao_percentual?: number | null;
   funcionario_empresas: { empresa_id: string }[] | null;
 };
 

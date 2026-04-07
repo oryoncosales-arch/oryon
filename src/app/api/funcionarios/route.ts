@@ -110,6 +110,9 @@ export async function POST(req: NextRequest) {
         cargo,
         user_id: newUserId,
         ativo: true,
+        salario: null,
+        dia_pagamento: null,
+        comissao_percentual: null,
       })
       .select("*")
       .single();

@@ -99,6 +99,9 @@ type FuncionarioRow = {
   email: string;
   cargo: Cargo;
   ativo: boolean;
+  salario?: number | null;
+  dia_pagamento?: number | null;
+  comissao_percentual?: number | null;
   created_at?: string;
   funcionario_empresas: { empresa_id: string }[] | null;
 };
@@ -117,6 +120,35 @@ const money = new Intl.NumberFormat("pt-BR", {
 });
 
 const TRANSACOES_POR_PAGINA = 15;
+
+function formatPtBrMoneyInput(n: number) {
+  return new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+}
+
+function parsePtBrMoneyInput(s: string): number | null {
+  const t = s.replace(/\s/g, "").trim();
+  if (!t) return null;
+  const normalized = t.replace(/\./g, "").replace(",", ".");
+  const n = parseFloat(normalized);
+  return Number.isFinite(n) ? n : null;
+}
+
+function parseComissaoInput(s: string): number | null {
+  const t = s.replace(/\s/g, "").replace("%", "").trim();
+  if (!t) return null;
+  const n = parseFloat(t.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+}
+
+function clampIntDiaPagamento(v: number): number | null {
+  if (!Number.isFinite(v)) return null;
+  const d = Math.round(v);
+  if (d < 1 || d > 31) return null;
+  return d;
+}
 
 function formatDatePtBR(iso: string) {
   const d = new Date(iso);
@@ -583,6 +615,18 @@ export default function DashboardClient(props: {
     () => new Set(),
   );
   const [salvandoDesignacao, setSalvandoDesignacao] = useState(false);
+
+  const [funcionarioEditando, setFuncionarioEditando] = useState<FuncionarioRow | null>(
+    null,
+  );
+  const [editNome, setEditNome] = useState("");
+  const [editCargo, setEditCargo] = useState<Cargo>("assistente");
+  const [editAtivo, setEditAtivo] = useState(true);
+  const [editSalarioText, setEditSalarioText] = useState("");
+  const [editDiaPagamento, setEditDiaPagamento] = useState("");
+  const [editComissaoText, setEditComissaoText] = useState("");
+  const [editEmpresaIds, setEditEmpresaIds] = useState<Set<string>>(() => new Set());
+  const [salvandoEdicaoFuncionario, setSalvandoEdicaoFuncionario] = useState(false);
 
   const empresaNomePorId = useMemo(() => {
     const m = new Map<string, string>();
@@ -1246,6 +1290,114 @@ export default function DashboardClient(props: {
     }
   }
 
+  function abrirEdicaoFuncionario(f: FuncionarioRow) {
+    setFuncionarioEditando(f);
+    setEditNome(f.nome);
+    setEditCargo(f.cargo);
+    setEditAtivo(f.ativo);
+    setEditSalarioText(
+      f.salario != null && Number.isFinite(Number(f.salario))
+        ? formatPtBrMoneyInput(Number(f.salario))
+        : "",
+    );
+    setEditDiaPagamento(
+      f.dia_pagamento != null ? String(f.dia_pagamento) : "",
+    );
+    setEditComissaoText(
+      f.comissao_percentual != null && Number.isFinite(Number(f.comissao_percentual))
+        ? String(f.comissao_percentual).replace(".", ",")
+        : "",
+    );
+    setEditEmpresaIds(
+      new Set((f.funcionario_empresas ?? []).map((x) => x.empresa_id)),
+    );
+  }
+
+  function toggleEditEmpresa(empresaId: string) {
+    setEditEmpresaIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(empresaId)) n.delete(empresaId);
+      else n.add(empresaId);
+      return n;
+    });
+  }
+
+  async function salvarEdicaoFuncionario() {
+    if (!funcionarioEditando) return;
+    setErro(null);
+    const nome = editNome.trim();
+    if (!nome) {
+      setErro("Nome é obrigatório.");
+      return;
+    }
+
+    const salario = parsePtBrMoneyInput(editSalarioText);
+    const diaRaw = parseInt(editDiaPagamento.trim(), 10);
+    const dia_pagamento =
+      editDiaPagamento.trim() === ""
+        ? null
+        : clampIntDiaPagamento(diaRaw);
+
+    if (editDiaPagamento.trim() !== "" && dia_pagamento === null) {
+      setErro("Dia de pagamento deve estar entre 1 e 31.");
+      return;
+    }
+
+    let comissao_percentual: number | null = null;
+    if (editComissaoText.trim() !== "") {
+      const c = parseComissaoInput(editComissaoText);
+      if (c === null || c < 0 || c > 100) {
+        setErro("Comissão deve ser entre 0 e 100%.");
+        return;
+      }
+      comissao_percentual = c;
+    }
+
+    const allowedEmpresaIds = new Set(props.empresasEscritorio.map((e) => e.id));
+    const empresaIds = [...editEmpresaIds].filter((id) => allowedEmpresaIds.has(id));
+
+    setSalvandoEdicaoFuncionario(true);
+    try {
+      const { error: updErr } = await supabase
+        .from("funcionarios")
+        .update({
+          nome,
+          cargo: editCargo,
+          ativo: editAtivo,
+          salario,
+          dia_pagamento,
+          comissao_percentual,
+        })
+        .eq("id", funcionarioEditando.id);
+
+      if (updErr) throw new Error(updErr.message);
+
+      const { error: delErr } = await supabase
+        .from("funcionario_empresas")
+        .delete()
+        .eq("funcionario_id", funcionarioEditando.id);
+
+      if (delErr) throw new Error(delErr.message);
+
+      if (empresaIds.length) {
+        const { error: insErr } = await supabase.from("funcionario_empresas").insert(
+          empresaIds.map((empresa_id) => ({
+            funcionario_id: funcionarioEditando.id,
+            empresa_id,
+          })),
+        );
+        if (insErr) throw new Error(insErr.message);
+      }
+
+      setFuncionarioEditando(null);
+      router.refresh();
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : "Erro ao salvar funcionário.");
+    } finally {
+      setSalvandoEdicaoFuncionario(false);
+    }
+  }
+
   async function desativarFuncionario(id: string) {
     setErro(null);
     try {
@@ -1608,6 +1760,151 @@ export default function DashboardClient(props: {
                 className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
               >
                 {salvandoDesignacao ? "Salvando..." : "Salvar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {funcionarioEditando ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center px-4"
+          style={{ background: "rgba(0,0,0,0.7)" }}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-2xl border border-[#1D9E75]/20 bg-[#080808] p-6 shadow-xl">
+            <div className="text-lg font-semibold">Editar funcionário</div>
+            <div className="mt-1 text-xs text-white/40">{funcionarioEditando.email}</div>
+
+            <div className="mt-6 space-y-6">
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[#5DCAA5]">
+                  Dados pessoais
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Nome completo</label>
+                  <input
+                    value={editNome}
+                    onChange={(e) => setEditNome(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Cargo</label>
+                  <select
+                    value={editCargo}
+                    onChange={(e) => setEditCargo(e.target.value as Cargo)}
+                    className="w-full rounded-xl bg-[#080808] border border-[#1D9E75]/20 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                  >
+                    <option value="socio">Sócio</option>
+                    <option value="contador">Contador</option>
+                    <option value="assistente">Assistente</option>
+                  </select>
+                </div>
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editAtivo}
+                    onChange={(e) => setEditAtivo(e.target.checked)}
+                    className="rounded border-white/20"
+                  />
+                  <span className="text-sm text-white/80">Funcionário ativo</span>
+                </label>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[#5DCAA5]">
+                  Financeiro
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">Salário fixo (R$)</label>
+                  <div className="flex rounded-xl border border-white/10 bg-black/30 overflow-hidden focus-within:border-[#5DCAA5]">
+                    <span className="px-3 py-2 text-sm text-white/50 shrink-0">R$</span>
+                    <input
+                      value={editSalarioText}
+                      onChange={(e) => setEditSalarioText(e.target.value)}
+                      placeholder="0,00"
+                      className="flex-1 min-w-0 bg-transparent px-2 py-2 text-sm outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">
+                    Dia de pagamento (1–31)
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    value={editDiaPagamento}
+                    onChange={(e) => setEditDiaPagamento(e.target.value)}
+                    className="w-full rounded-xl bg-black/30 border border-white/10 px-3 py-2 text-sm outline-none focus:border-[#5DCAA5]"
+                    placeholder="Ex: 5"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-white/50 mb-1">
+                    Comissão % por contrato fechado
+                  </label>
+                  <div className="flex rounded-xl border border-white/10 bg-black/30 overflow-hidden focus-within:border-[#5DCAA5]">
+                    <input
+                      value={editComissaoText}
+                      onChange={(e) => setEditComissaoText(e.target.value)}
+                      placeholder="0"
+                      className="flex-1 min-w-0 bg-transparent px-3 py-2 text-sm outline-none"
+                    />
+                    <span className="px-3 py-2 text-sm text-white/50 shrink-0">%</span>
+                  </div>
+                  <p className="mt-2 text-xs text-white/40 leading-relaxed">
+                    A comissão é calculada sobre o valor mensal de cada contrato que o
+                    funcionário fechar
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-[#5DCAA5]">
+                  Empresas designadas
+                </div>
+                <div className="max-h-40 overflow-y-auto space-y-2 rounded-xl border border-white/10 p-3">
+                  {props.empresasEscritorio.length ? (
+                    props.empresasEscritorio.map((e) => (
+                      <label
+                        key={e.id}
+                        className="flex items-center gap-2 text-sm text-white/80 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={editEmpresaIds.has(e.id)}
+                          onChange={() => toggleEditEmpresa(e.id)}
+                          className="rounded border-white/20"
+                        />
+                        <span className="truncate">{e.nome}</span>
+                      </label>
+                    ))
+                  ) : (
+                    <div className="text-xs text-white/40">Nenhuma empresa cadastrada.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setFuncionarioEditando(null)}
+                className="rounded-xl border border-[#1D9E75]/20 px-4 py-2 text-sm font-semibold text-white/90 hover:bg-white/5"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={salvandoEdicaoFuncionario}
+                onClick={() => void salvarEdicaoFuncionario()}
+                className="rounded-xl bg-[#1D9E75] px-4 py-2 text-sm font-semibold text-black hover:brightness-110 disabled:opacity-60"
+              >
+                {salvandoEdicaoFuncionario ? "Salvando..." : "Salvar alterações"}
               </button>
             </div>
           </div>
@@ -2241,7 +2538,7 @@ export default function DashboardClient(props: {
                 </div>
               ) : (
                 <div className="rounded-2xl border border-white/10 bg-white/5 overflow-hidden overflow-x-auto">
-                  <table className="w-full text-sm min-w-[720px]">
+                  <table className="w-full text-sm min-w-[800px]">
                     <thead>
                       <tr className="border-b border-white/10 text-left text-xs text-white/50 uppercase tracking-wide">
                         <th className="px-4 py-3 font-medium">Nome</th>
@@ -2293,17 +2590,24 @@ export default function DashboardClient(props: {
                               )}
                             </td>
                             <td className="px-4 py-3 text-right">
-                              {f.ativo ? (
+                              <div className="inline-flex flex-wrap items-center justify-end gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => void desativarFuncionario(f.id)}
-                                  className="rounded-lg border border-red-500/25 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                                  onClick={() => abrirEdicaoFuncionario(f)}
+                                  className="rounded-lg border border-[#1D9E75]/25 px-3 py-1.5 text-xs font-semibold text-[#5DCAA5] hover:bg-[#1D9E75]/10"
                                 >
-                                  Desativar
+                                  Editar
                                 </button>
-                              ) : (
-                                <span className="text-white/30 text-xs">—</span>
-                              )}
+                                {f.ativo ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => void desativarFuncionario(f.id)}
+                                    className="rounded-lg border border-red-500/25 px-3 py-1.5 text-xs font-semibold text-red-300 hover:bg-red-500/10"
+                                  >
+                                    Desativar
+                                  </button>
+                                ) : null}
+                              </div>
                             </td>
                           </tr>
                         );
