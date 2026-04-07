@@ -1487,6 +1487,182 @@ export default function DashboardClient(props: {
     }
   }
 
+  async function exportarPDF() {
+    if (!diagnostico || !empresaSelecionada) return;
+
+    const { jsPDF } = await import("jspdf");
+    const doc = new jsPDF();
+    const verde = [29, 158, 117] as const;
+    const cinza = [180, 180, 180] as const;
+    let y = 20;
+
+    // Cabeçalho
+    doc.setFillColor(...verde);
+    doc.rect(0, 0, 210, 14, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("+CONTÁBIL", 10, 9);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.text("Diagnóstico Financeiro", 210 - 10, 9, { align: "right" });
+
+    y = 24;
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(16);
+    doc.setFont("helvetica", "bold");
+    doc.text(empresaSelecionada.nome, 10, y);
+    y += 7;
+    doc.setFontSize(9);
+    doc.setFont("helvetica", "normal");
+    doc.setTextColor(...cinza);
+    doc.text(`Gerado em ${new Date().toLocaleDateString("pt-BR")}`, 10, y);
+    y += 10;
+
+    // Score
+    const scoreVal = Math.round(diagnostico.score ?? 0);
+    const scoreCor =
+      scoreVal > 70 ? [29, 158, 117] : scoreVal >= 40 ? [234, 179, 8] : [239, 68, 68];
+    doc.setFillColor(...(scoreCor as [number, number, number]));
+    doc.roundedRect(10, y, 190, 18, 4, 4, "F");
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text(`Score de Saúde: ${scoreVal}/100`, 15, y + 7);
+    doc.setFontSize(10);
+    const label = scoreVal > 70 ? "Boa" : scoreVal >= 40 ? "Regular" : "Crítica";
+    doc.text(`Situação: ${label}`, 15, y + 14);
+    y += 25;
+
+    // Resumo
+    doc.setTextColor(20, 20, 20);
+    doc.setFontSize(11);
+    doc.setFont("helvetica", "bold");
+    doc.text("Resumo", 10, y);
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(60, 60, 60);
+    const resumoLines = doc.splitTextToSize(diagnostico.resumo ?? "", 188);
+    doc.text(resumoLines, 10, y);
+    y += resumoLines.length * 5 + 8;
+
+    // Problemas
+    if (diagnostico.problemas?.length) {
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Problemas identificados", 10, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const p of diagnostico.problemas) {
+        doc.setTextColor(220, 50, 50);
+        doc.text("•", 10, y);
+        doc.setTextColor(60, 60, 60);
+        const lines = doc.splitTextToSize(p, 180);
+        doc.text(lines, 16, y);
+        y += lines.length * 5 + 2;
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+        }
+      }
+      y += 4;
+    }
+
+    // Oportunidades
+    if (diagnostico.oportunidades?.length) {
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Oportunidades", 10, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const o of diagnostico.oportunidades) {
+        doc.setTextColor(...verde);
+        doc.text("•", 10, y);
+        doc.setTextColor(60, 60, 60);
+        const lines = doc.splitTextToSize(o, 180);
+        doc.text(lines, 16, y);
+        y += lines.length * 5 + 2;
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+        }
+      }
+      y += 4;
+    }
+
+    // Sugestões
+    if (diagnostico.sugestoes?.length) {
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Sugestões", 10, y);
+      y += 6;
+      doc.setFont("helvetica", "normal");
+      doc.setFontSize(9);
+      for (const s of diagnostico.sugestoes) {
+        doc.setTextColor(100, 100, 100);
+        doc.text("•", 10, y);
+        doc.setTextColor(60, 60, 60);
+        const lines = doc.splitTextToSize(s, 180);
+        doc.text(lines, 16, y);
+        y += lines.length * 5 + 2;
+        if (y > 270) {
+          doc.addPage();
+          y = 20;
+        }
+      }
+      y += 4;
+    }
+
+    // Maiores gastos
+    if (diagnostico.maiores_gastos?.length) {
+      if (y > 240) {
+        doc.addPage();
+        y = 20;
+      }
+      doc.setTextColor(20, 20, 20);
+      doc.setFontSize(11);
+      doc.setFont("helvetica", "bold");
+      doc.text("Maiores gastos", 10, y);
+      y += 6;
+      for (const g of diagnostico.maiores_gastos) {
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(60, 60, 60);
+        doc.text(
+          `${g.categoria}: R$ ${g.valor.toLocaleString("pt-BR", {
+            minimumFractionDigits: 2,
+          })} (${Math.round(g.percentual)}%)`,
+          10,
+          y,
+        );
+        y += 5;
+        doc.setFillColor(...verde);
+        const bar = Math.min(188, (g.percentual / 100) * 188);
+        doc.rect(10, y, bar, 3, "F");
+        doc.setFillColor(220, 220, 220);
+        doc.rect(10 + bar, y, 188 - bar, 3, "F");
+        y += 7;
+      }
+    }
+
+    // Rodapé
+    doc.setTextColor(...cinza);
+    doc.setFontSize(8);
+    doc.text("Gerado pelo +Contábil · omaiscontabil.com.br", 105, 290, { align: "center" });
+
+    doc.save(
+      `diagnostico-${empresaSelecionada.nome
+        .toLowerCase()
+        .replace(/\\s+/g, "-")}.pdf`,
+    );
+  }
+
   async function gerarAcoes() {
     setErro(null);
     if (!empresaSelecionada) {
@@ -3530,6 +3706,20 @@ export default function DashboardClient(props: {
                   <div className="mt-1 text-sm text-white/50">
                     Visão geral da saúde financeira
                   </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void exportarPDF()}
+                    disabled={!diagnostico || !empresaSelecionada}
+                    className={clsx(
+                      "rounded-xl border px-4 py-2 text-sm font-semibold inline-flex items-center gap-2",
+                      "border-white/10 bg-white/5 text-white/80 hover:bg-white/10",
+                      (!diagnostico || !empresaSelecionada) && "opacity-40",
+                    )}
+                  >
+                    Exportar PDF
+                  </button>
                 </div>
               </div>
 
