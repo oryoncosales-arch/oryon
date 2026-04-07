@@ -23,42 +23,17 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1200,
+      max_tokens: 600,
       messages: [
         {
           role: 'user',
-          content: `Você é um orquestrador financeiro operacional para pequenas empresas brasileiras.
+          content: `Você é um orquestrador financeiro. Com base no DIAGNÓSTICO abaixo, gere de 2 a 3 ações prioritárias.
 
-Objetivo: com base no DIAGNÓSTICO FINANCEIRO, detectar pendências e prazos críticos e gerar uma lista de ações de comunicação/execução a disparar.
+Retorne APENAS este JSON:
+{"acoes":[{"destinatario":"string","assunto":"string","mensagem":"string","prioridade":"alta"|"media"|"baixa"}]}
 
-Regras obrigatórias:
-- Responda em português.
-- Use APENAS o que estiver no diagnóstico e nos dados de empresa/contato. Não invente datas, prazos, impostos, valores, dívidas, fornecedores ou qualquer informação não presente.
-- Se faltarem informações para criar uma ação confiável, crie uma ação de prioridade "media" pedindo a informação faltante ao contato.
-- Seja direto, com mensagens prontas para enviar.
-
-Retorne um JSON com este formato exato:
-{
-  "acoes": [
-    {
-      "destinatario": "string",
-      "assunto": "string",
-      "mensagem": "string",
-      "prioridade": "baixa" | "media" | "alta"
-    }
-  ]
-}
-
-Retorne APENAS o JSON, sem texto adicional.
-
-EMPRESA:
-${JSON.stringify(empresa, null, 2)}
-
-CONTATO:
-${JSON.stringify(contato, null, 2)}
-
-DIAGNÓSTICO FINANCEIRO:
-${JSON.stringify(diagnostico, null, 2)}`,
+EMPRESA: ${JSON.stringify(empresa)}
+DIAGNÓSTICO: ${JSON.stringify(diagnostico)}`,
         },
       ],
     })
