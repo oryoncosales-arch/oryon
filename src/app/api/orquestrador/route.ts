@@ -22,14 +22,14 @@ export async function POST(req: NextRequest) {
     }
 
     const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 600,
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 800,
       messages: [
         {
           role: 'user',
-          content: `Você é um orquestrador financeiro. Com base no DIAGNÓSTICO abaixo, gere de 2 a 3 ações prioritárias.
+          content: `Orquestrador financeiro: no máximo 3 ações (2–3) a partir do diagnóstico. Português, mensagens curtas e executáveis.
 
-Retorne APENAS este JSON:
+JSON único, sem markdown:
 {"acoes":[{"destinatario":"string","assunto":"string","mensagem":"string","prioridade":"alta"|"media"|"baixa"}]}
 
 EMPRESA: ${JSON.stringify(empresa)}

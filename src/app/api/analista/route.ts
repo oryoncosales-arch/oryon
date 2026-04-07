@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 1500,
       system: `Você é um contador inteligente da plataforma ORYON, especializado em analisar dados financeiros de pequenas e médias empresas de forma simples, prática e estratégica.
 
 Seu papel não é apenas organizar dados, mas interpretar e orientar o dono da empresa com clareza, como um consultor financeiro.
@@ -55,7 +55,13 @@ saude_financeira deve ser: "boa", "regular" ou "critica"
 score deve ser um numero de 0 a 100
 
 DADOS FINANCEIROS:
-${JSON.stringify(dados, null, 2)}`,
+${JSON.stringify({
+    totalEntradas: dados.resumo?.totalEntradas,
+    totalSaidas: dados.resumo?.totalSaidas,
+    saldo: dados.resumo?.saldo,
+    porCategoria: dados.resumo?.porCategoria,
+    topTransacoes: dados.transacoes?.slice(0, 20),
+  })}`,
         },
       ],
     })

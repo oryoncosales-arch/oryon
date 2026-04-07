@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
 
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 800,
+      max_tokens: 600,
       messages: [
         {
           role: 'user',
@@ -37,7 +37,14 @@ PERGUNTA:
 ${pergunta}
 
 DADOS FINANCEIROS:
-${JSON.stringify(dados, null, 2)}`,
+${JSON.stringify(
+          {
+            ...dados,
+            transacoes: dados.transacoes?.slice(0, 30),
+          },
+          null,
+          2,
+        )}`,
         },
       ],
     })
